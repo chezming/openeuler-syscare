@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::io::{BufRead, BufReader, Write, LineWriter};
+use std::io::{BufRead, BufReader, Write, BufWriter};
 
 use sha2::Digest;
 use sha2::Sha256;
@@ -232,6 +232,28 @@ pub fn copy_all_files<P: AsRef<Path>, Q: AsRef<Path>>(src_dir: P, dst_dir: Q) ->
     Ok(())
 }
 
+pub fn read_file_to_string<P: AsRef<Path>>(file_path: P) -> std::io::Result<String> {
+    self::check_file(file_path.as_ref())?;
+
+    let str = std::io::read_to_string(
+        std::fs::File::open(file_path)?
+    )?;
+
+    Ok(str.trim().to_owned())
+}
+
+pub fn write_string_to_file<P: AsRef<Path>>(file_path: P, str: &str) -> std::io::Result<()> {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(file_path)?;
+
+    write!(file, "{}", str)?;
+
+    file.flush()
+}
+
 pub fn read_file_content<P: AsRef<Path>>(file_path: P) -> std::io::Result<VecDeque<String>> {
     self::check_file(file_path.as_ref())?;
 
@@ -245,24 +267,23 @@ pub fn read_file_content<P: AsRef<Path>>(file_path: P) -> std::io::Result<VecDeq
     Ok(file_content)
 }
 
-pub fn write_file_contect<P, I>(file_path: P, file_content: I) -> std::io::Result<()>
+pub fn write_file_content<P, I>(file_path: P, file_content: I) -> std::io::Result<()>
 where
     P: AsRef<Path>,
     I: IntoIterator<Item = String>
 {
-    self::check_file(file_path.as_ref())?;
-
     let file = std::fs::OpenOptions::new()
+        .create(true)
         .truncate(true)
         .write(true)
         .open(file_path)?;
 
-    let mut writer = LineWriter::new(file);
+    let mut writer = BufWriter::new(file);
     for line in file_content {
         writeln!(writer, "{}", line)?;
     }
 
-    Ok(())
+    writer.flush()
 }
 
 pub fn sha256_digest_file<P: AsRef<Path>>(file: P) -> std::io::Result<String> {
@@ -271,7 +292,11 @@ pub fn sha256_digest_file<P: AsRef<Path>>(file: P) -> std::io::Result<String> {
     Ok(format!("{:#x}", hasher.finalize()))
 }
 
-pub fn sha256_digest_file_list<P: AsRef<Path>>(file_list: &[P]) -> std::io::Result<String> {
+pub fn sha256_digest_file_list<I, P>(file_list: I) -> std::io::Result<String>
+where
+    I: IntoIterator<Item = P>,
+    P: AsRef<Path>
+{
     let mut hasher = Sha256::new();
     for file in file_list {
         hasher.update(std::fs::read(file)?);

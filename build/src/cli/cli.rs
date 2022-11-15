@@ -1,16 +1,14 @@
-use clap::Parser;
-
 use crate::package::{PackageInfo, PackageType};
 use crate::package::{RpmSpecGenerator, RpmPatchHelper, RpmHelper, RpmBuildRoot, RpmBuilder};
 use crate::patch::{PatchType, PatchInfo, PatchBuilderFactory, PatchBuilderOptions};
 use crate::patch::{UserPatchHelper, KernelPatchHelper};
+
+use crate::statics::*;
 use crate::util::fs;
 
 use super::path::CliPath;
 use super::workdir::CliWorkDir;
 use super::args::CliArguments;
-
-const PKG_PATCH_DIR_NAME: &str = ".syscare_patches";
 
 pub struct PatchBuildCLI {
     work_dir: CliWorkDir,
@@ -21,7 +19,7 @@ impl PatchBuildCLI {
     pub fn new() -> Self {
         Self {
             work_dir: CliWorkDir::new(),
-            cli_args: CliArguments::parse(),
+            cli_args: CliArguments::new(),
         }
     }
 
@@ -49,13 +47,11 @@ impl PatchBuildCLI {
     }
 
     fn extract_source_package(&mut self) -> std::io::Result<RpmBuildRoot> {
-        const KERNEL_PKG_NAME: &str = "kernel";
-
         println!("Extracting source package");
 
         let args = &mut self.cli_args;
         let pkg_path = args.source.to_string();
-        let pkg_extract_dir = self.work_dir.get_package_extract_dir();
+        let pkg_build_root = self.work_dir.get_package_build_root();
 
         let pkg_info = PackageInfo::read_from_package(&pkg_path)?;
         if pkg_info.get_type() != PackageType::SourcePackage {
@@ -65,7 +61,7 @@ impl PatchBuildCLI {
             ));
         }
 
-        let build_root = RpmHelper::extract_package(&pkg_path, pkg_extract_dir)?;
+        let build_root = RpmHelper::extract_package(&pkg_path, pkg_build_root)?;
 
         // Find source directory from extracted package root
         // Typically, the source directory name contains package name
@@ -77,7 +73,7 @@ impl PatchBuildCLI {
         // Collect addtional patches from patched source package
         let arg_patch_list = &mut args.patches;
         let mut total_patch_list = Vec::with_capacity(arg_patch_list.len());
-        let syscare_patch_dir = format!("{}/{}", build_root.get_source_path(), PKG_PATCH_DIR_NAME);
+        let syscare_patch_dir = format!("{}/{}", build_root.get_source_path(), PKG_DIR_NAME_PATCH);
         if let Ok(patch_list) = fs::list_all_files(syscare_patch_dir, false) {
             total_patch_list.append(
                 &mut patch_list.into_iter().map(fs::stringtify_path).collect::<Vec<_>>()
@@ -177,20 +173,18 @@ impl PatchBuildCLI {
         let args = &self.cli_args;
 
         println!("Building patched source package");
-        let patch_list = RpmPatchHelper::modify_patch_list(patch_info.get_file_list());        
+        let patch_list = RpmPatchHelper::modify_patch_list(patch_info.get_file_list());
         let spec_file_path = build_root.find_spec_file()?;
         RpmPatchHelper::modify_spec_file_by_patches(&spec_file_path, &patch_list)?;
 
         let rpm_builder = RpmBuilder::from(build_root);
         rpm_builder.copy_patch_file_to_source(&patch_list)?;
-        rpm_builder.build_source_package(&spec_file_path, patch_info.get_patch_version(), &args.output_dir)?;
+        rpm_builder.build_source_package(&spec_file_path, patch_info.get_patch_name(), &args.output_dir)?;
 
         Ok(())
     }
 
     fn build_patch_package(&self, patch_info: &PatchInfo) -> std::io::Result<()> {
-        const PATCH_INFO_FILE_NAME: &str = "patch_info";
-
         let args = &self.cli_args;
         let patch_build_root = self.work_dir.get_patch_build_root();
         let patch_output_dir = self.work_dir.get_patch_output_dir();
