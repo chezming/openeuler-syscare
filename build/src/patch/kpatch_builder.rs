@@ -20,7 +20,7 @@ impl KernelPatchBuilder {
         let patch_info = &options.patch_info;
 
         result.push(String::from("--name"));
-        result.push(patch_info.get_patch_name().get_name().to_owned());
+        result.push(patch_info.get_patch().get_name().to_owned());
 
         result.push(String::from("--sourcedir"));
         result.push(options.source_dir.to_owned());
@@ -36,10 +36,8 @@ impl KernelPatchBuilder {
             result.push(config.to_owned());
         }
 
-        if let Some(jobs) = &options.kjobs {
-            result.push(String::from("--jobs"));
-            result.push(jobs.to_string());
-        }
+        result.push(String::from("--jobs"));
+        result.push(options.kjobs.to_string());
 
         // if let Some(target) = &options.ktarget {
         //     result.push(String::from("--target"));

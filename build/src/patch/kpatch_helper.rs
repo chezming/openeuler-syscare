@@ -60,7 +60,7 @@ impl KernelPatchHelper {
         fs::check_dir(output_dir)?;
 
         let dst_path = format!("{}/{}", output_dir, KERNEL_CONFIG_NAME);
-        if kconfig_path.eq(&dst_path) {
+        if *kconfig_path == dst_path {
             return Ok(());
         }
         std::fs::copy(kconfig_path, dst_path)?;
@@ -68,7 +68,7 @@ impl KernelPatchHelper {
         Ok(())
     }
 
-    pub fn build_kernel(source_dir: &str) -> std::io::Result<String> {
+    pub fn build_kernel(source_dir: &str, jobs: usize) -> std::io::Result<String> {
         fs::check_dir(source_dir)?;
 
         {
@@ -84,7 +84,10 @@ impl KernelPatchHelper {
         }
 
         {
-            let exit_status = MAKE.execvp(["-C", source_dir, "-j"])?;
+            let exit_status = MAKE.execvp([
+                "-C", source_dir,
+                "-j", jobs.to_string().as_str()
+            ])?;
 
             let exit_code = exit_status.exit_code();
             if exit_code != 0 {
