@@ -63,18 +63,6 @@ pub fn create_dir_all<P: AsRef<Path>>(dir_path: P) -> std::io::Result<()> {
     Ok(())
 }
 
-pub fn get_file_ext<P: AsRef<Path>>(file_path: P) -> std::io::Result<String> {
-    let file = file_path.as_ref();
-    self::check_file(file)?;
-
-    let file_ext = file.extension()
-        .and_then(OsStr::to_str)
-        .unwrap_or_default()
-        .to_string();
-
-    Ok(file_ext)
-}
-
 pub fn list_all_dirs<P: AsRef<Path>>(directory: P, recursive: bool) -> std::io::Result<Vec<PathBuf>> {
     let search_path = directory.as_ref();
 
@@ -87,7 +75,7 @@ pub fn list_all_dirs<P: AsRef<Path>>(directory: P, recursive: bool) -> std::io::
             if !current_path.is_dir() {
                 continue;
             }
-            dir_list.push(current_path.canonicalize()?);
+            dir_list.push(self::realpath(current_path.as_path())?);
         }
     }
 
@@ -113,10 +101,10 @@ pub fn list_all_files<P: AsRef<Path>>(directory: P, recursive: bool) -> std::io:
             let current_path_type = current_path.metadata()?.file_type();
 
             if current_path_type.is_file() {
-                file_list.push(current_path.canonicalize()?)
+                file_list.push(self::realpath(current_path.as_path())?);
             }
             if current_path_type.is_dir() {
-                dir_list.push(current_path.canonicalize()?);
+                dir_list.push(self::realpath(current_path.as_path())?);
             }
         }
     }
@@ -145,11 +133,11 @@ pub fn list_all_files_ext<P: AsRef<Path>>(directory: P, file_ext: &str, recursiv
             if current_path_type.is_file() {
                 let current_path_ext = current_path.extension().unwrap_or_default();
                 if current_path_ext == file_ext {
-                    file_list.push(current_path.canonicalize()?);
+                    file_list.push(self::realpath(current_path.as_path())?);
                 }
             }
             if current_path_type.is_dir() {
-                dir_list.push(current_path.canonicalize()?);
+                dir_list.push(self::realpath(current_path.as_path())?);
             }
         }
     }
@@ -242,6 +230,22 @@ pub fn copy_all_files<P: AsRef<Path>, Q: AsRef<Path>>(src_dir: P, dst_dir: Q) ->
     }
 
     Ok(())
+}
+
+pub fn file_ext<P: AsRef<Path>>(file_path: P) -> std::io::Result<String> {
+    let file = file_path.as_ref();
+    self::check_file(file)?;
+
+    let file_ext = file.extension()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_string();
+
+    Ok(file_ext)
+}
+
+pub fn realpath<P: AsRef<Path>>(path: P) -> std::io::Result<PathBuf> {
+    path.as_ref().canonicalize()
 }
 
 pub fn read_file_to_string<P: AsRef<Path>>(file_path: P) -> std::io::Result<String> {

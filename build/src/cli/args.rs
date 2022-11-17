@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use crate::statics::*;
+use crate::constants::*;
 use crate::util::sys;
 
 use super::CliPath;
@@ -42,7 +42,7 @@ pub struct CliArguments {
 
     /// Debug info (vmlinux for kernel)
     #[arg(short, long)]
-    pub debug_info: Option<CliPath>,
+    pub debug_info: Option<String>,
 
     /// Working directory
     #[arg(long, default_value=CLI_DEFAULT_WORK_DIR)]
