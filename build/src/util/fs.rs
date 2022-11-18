@@ -6,8 +6,8 @@ use std::io::{BufRead, BufReader, Write, BufWriter};
 use sha2::Digest;
 use sha2::Sha256;
 
-pub fn stringtify_path<P: AsRef<Path>>(path: P) -> String {
-    path.as_ref().to_string_lossy().to_string()
+pub fn stringtify<P: AsRef<Path>>(path: P) -> String {
+    format!("{}", path.as_ref().display())
 }
 
 pub fn check_exist<P: AsRef<Path>>(path: P) -> std::io::Result<()> {
@@ -181,7 +181,7 @@ pub fn find_file<P: AsRef<Path>>(directory: P, file_name: &str, fuzz: bool, recu
     self::check_dir(search_path)?;
 
     for file in self::list_all_files(search_path, recursive)? {
-        if let Some(curr_file_name) = file.file_name().and_then(OsStr::to_str) {
+        if let Ok(curr_file_name) = self::file_name(file.as_path()) {
             if curr_file_name == file_name {
                 return Ok(file);
             }
@@ -221,27 +221,49 @@ pub fn copy_all_files<P: AsRef<Path>, Q: AsRef<Path>>(src_dir: P, dst_dir: Q) ->
     self::check_dir(&dst_dir)?;
 
     for src_file in self::list_all_files(src_dir, true)? {
-        if let Some(file_name) = src_file.file_name() {
-            let mut dst_file = dst_dir.as_ref().to_path_buf();
-            dst_file.push(file_name);
+        let mut dst_file = dst_dir.as_ref().to_path_buf();
+        dst_file.push(self::file_name(src_file.as_path())?);
 
-            std::fs::copy(src_file, dst_file)?;
-        }
+        std::fs::copy(src_file, dst_file)?;
     }
 
     Ok(())
 }
 
+pub fn file_name<P: AsRef<Path>>(file_path: P) -> std::io::Result<String> {
+    let file = file_path.as_ref();
+
+    self::check_exist(file)?;
+
+    match file.file_name() {
+        Some(file_name) => {
+            Ok(self::stringtify(file_name))
+        },
+        None => {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Parse file name from '{}' failed", file.display())
+            ))
+        }
+    }
+}
+
 pub fn file_ext<P: AsRef<Path>>(file_path: P) -> std::io::Result<String> {
     let file = file_path.as_ref();
+
     self::check_file(file)?;
 
-    let file_ext = file.extension()
-        .and_then(OsStr::to_str)
-        .unwrap_or_default()
-        .to_string();
-
-    Ok(file_ext)
+    match file.extension() {
+        Some(file_ext) => {
+            Ok(self::stringtify(file_ext))
+        },
+        None => {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Parse file extension from '{}' failed", file.display())
+            ))
+        }
+    }
 }
 
 pub fn realpath<P: AsRef<Path>>(path: P) -> std::io::Result<PathBuf> {
