@@ -15,7 +15,7 @@ impl RpmSpecHelper {
         let (line_num, orig_tag) = release_tag;
 
         let patch  = patch_info.get_patch();
-        let target = patch_info.get_target().unwrap();
+        let target = patch_info.get_target();
 
         let tag_name  = orig_tag.get_name().to_string();
         let tag_value = format!("{}.{}.{}.{}.{}",
@@ -100,7 +100,7 @@ impl RpmSpecHelper {
             }
 
             // Add parsed source tag into the btree set
-            if let Some(tag) = RpmSpecParser::parse_parse_id_tag(&current_line, PKG_SPEC_TAG_NAME_SOURCE) {
+            if let Some(tag) = RpmSpecParser::parse_id_tag(&current_line, PKG_SPEC_TAG_NAME_SOURCE) {
                 source_tags.insert(tag);
                 current_line_num += 1;
                 continue;
