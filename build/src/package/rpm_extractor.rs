@@ -23,19 +23,11 @@ impl RpmExtractor {
         if exit_code != 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
-                format!("Process '{}' exited unsuccessfully, exit code: {}", RPM, exit_code),
+                format!("Process '{}' exited unsuccessfully, exit_code={}", RPM, exit_code),
             ));
         }
 
         Ok(())
-    }
-
-    fn apply_patch(output_dir: &str) -> std::io::Result<()> {
-        RpmBuilder::new(
-            RpmHelper::find_build_root(
-                output_dir
-            )?
-        ).build_prepare()
     }
 
     pub fn extract_package(pkg_path: &str, output_dir: &str) -> std::io::Result<PackageInfo> {
@@ -43,7 +35,11 @@ impl RpmExtractor {
 
         let pkg_info = PackageInfo::parse_from(pkg_path)?;
         if pkg_info.get_type() == PackageType::SourcePackage {
-            Self::apply_patch(output_dir)?;
+            RpmBuilder::new(
+                RpmHelper::find_build_root(
+                    output_dir
+                )?
+            ).build_prepare()?;
         }
 
         Ok(pkg_info)
