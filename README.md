@@ -44,31 +44,44 @@
 
 ####补丁制作
 内核补丁制作：
-	syscare build --patch-name test --source ./kernel-xxxx.oexx.src.rpm --debug-info ./vmlinux ./test.patch
+```
+$ syscare build --patch-name test --source ./kernel-xxxx.oexx.src.rpm --debug-info ./vmlinux ./test.patch
+```
 用户态补丁制作：
-	syscare build --patch-name redis-test --source ./redis-xxx.rpm --target redis-server --debug-info ./redis ./redis-test.patch
+```
+$ syscare build --patch-name redis-test --source ./redis-xxx.rpm --target redis-server --debug-info ./redis ./redis-test.patch
+```
 
 ####补丁管理
-```
 1.补丁安装
-syscare apply test
+```
+$ syscare apply test
+```
 
 2.补丁激活：
-syscare active test
+```
+$ syscare active test
+```
 
 3.补丁去激活：
-syscarae deactive test
+```
+$ syscarae deactive test
+```
 
 4.补丁卸载/移除：
-syscare remove test
+```
+$ syscare remove test
+```
 补丁只有在deactive的状态才能移除
 
 5.补丁状态查询：
-syscare status test
+```
+$ syscare status test
+```
 
 6.查询syscare所有补丁：
-syscare patch list
-
+```
+$ syscare patch list
 ```
 
 #### 参与贡献
@@ -78,5 +91,3 @@ syscare patch list
 3.  完善特性代码 $ vim src/upatch/xxxx  & git commit -m ""
 4.  提交代码 $ git push origin
 5.  新建 Pull Request
-
-
