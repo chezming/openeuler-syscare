@@ -1,3 +1,6 @@
+use lazy_static::lazy_static;
+use regex::Regex;
+
 use crate::package::{PackageInfo, PackageType};
 use crate::package::{RpmExtractor, RpmHelper, RpmSpecHelper, RpmBuilder};
 
@@ -41,12 +44,16 @@ impl PatchBuildCLI {
     }
 
     fn check_canonicalize_input_args(&mut self) -> std::io::Result<()> {
+        lazy_static! {
+            static ref PATCH_NAME_REGEX: Regex = Regex::new(PATCH_NAME_REGEX_STR).unwrap();
+        }
+
         let args = &mut self.args;
 
-        if args.name.contains('-') {
+        if !PATCH_NAME_REGEX.is_match(&args.name) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("Patch name should not contain '-' character"),
+                format!("Patch name should not contain any special character except '_' & '-'"),
             ));
         }
 
@@ -146,7 +153,7 @@ impl PatchBuildCLI {
 
         // If the source package is kernel, append target elf name 'vmlinux' to arguments
         if pkg_info.get_name() == KERNEL_PKG_NAME {
-            args.target_elfname.get_or_insert(KERNEL_ELF_NAME.to_owned());
+            args.target_elfname.get_or_insert(KERNEL_VMLINUX_FILE.to_owned());
         }
 
         // Find source directory from extracted package root

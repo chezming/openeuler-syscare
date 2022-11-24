@@ -8,20 +8,19 @@ use crate::patch::PatchInfo;
 pub struct RpmSpecGenerator;
 
 impl RpmSpecGenerator {
-    #[inline(always)]
-    fn get_patch_name(patch_info: &PatchInfo) -> &str {
-        patch_info.get_patch().get_name()
-    }
-
-    #[inline(always)]
     fn parse_pkg_name(patch_info: &PatchInfo) -> String {
-        let patch_target = patch_info.get_target();
-        let patch_name   = Self::get_patch_name(patch_info);
-
-        format!("{}-{}-{}", PKG_FLAG_PATCH_BINARY, patch_target, patch_name)
+        format!("{}-{}-{}",
+            PKG_FLAG_PATCH_BINARY,
+            patch_info.get_target(),
+            patch_info.get_patch().get_name())
     }
 
-    #[inline(always)]
+    fn parse_pkg_install_path(patch_info: &PatchInfo) -> String {
+        format!("{}/{}",
+            patch_info.get_target(),
+            patch_info.get_patch().get_name())
+    }
+
     fn parse_build_requires(patch_info: &PatchInfo) -> String {
         let patch_target = patch_info.get_target();
 
@@ -32,7 +31,13 @@ impl RpmSpecGenerator {
         )
     }
 
-    #[inline(always)]
+    fn parse_summary(patch_info: &PatchInfo) -> String {
+        format!("Syscare patch '{}' for {}",
+            patch_info.get_patch().get_name(),
+            patch_info.get_target()
+        )
+    }
+
     fn write_patch_info<W>(mut writer: W, patch_info: &PatchInfo, source_dir: &str) -> std::io::Result<()>
     where
         W: Write
@@ -42,14 +47,14 @@ impl RpmSpecGenerator {
             .map(fs::file_name)
             .filter_map(Result::ok)
             .collect::<Vec<_>>();
-        let pkg_install_path = format!("{}/{}", PATCH_INSTALL_PATH, Self::get_patch_name(patch_info));
+        let pkg_install_path = format!("{}/{}", PATCH_INSTALL_PATH, Self::parse_pkg_install_path(patch_info));
 
         writeln!(writer, "Name:     {}", Self::parse_pkg_name(patch_info))?;
         writeln!(writer, "Version:  {}", patch_info.get_patch().get_version())?;
         writeln!(writer, "Release:  {}", patch_info.get_patch().get_release())?;
         writeln!(writer, "Group:    {}", PKG_SPEC_TAG_VALUE_GROUP)?;
         writeln!(writer, "License:  {}", patch_info.get_license())?;
-        writeln!(writer, "Summary:  {}", patch_info.get_summary())?;
+        writeln!(writer, "Summary:  {}", Self::parse_summary(patch_info))?;
         writeln!(writer, "Requires: {}", Self::parse_build_requires(patch_info))?;
         let mut file_index = 0usize;
         for file_name in &pkg_file_list {
@@ -59,7 +64,7 @@ impl RpmSpecGenerator {
         writeln!(writer)?;
 
         writeln!(writer, "%description")?;
-        writeln!(writer, "{}", patch_info)?;
+        writeln!(writer, "{}", patch_info.get_description())?;
         writeln!(writer)?;
 
         writeln!(writer, "%prep")?;
@@ -90,8 +95,7 @@ impl RpmSpecGenerator {
         fs::check_dir(source_dir)?;
         fs::check_dir(output_dir)?;
 
-        let patch_name = Self::get_patch_name(patch_info);
-        let pkg_spec_path = format!("{}/{}.spec", output_dir, patch_name);
+        let pkg_spec_path = format!("{}/{}.spec", output_dir, Self::parse_pkg_name(patch_info));
         let writer = LineWriter::new(
             std::fs::File::create(&pkg_spec_path)?
         );
