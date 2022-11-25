@@ -23,12 +23,13 @@ Options:
       --target-version <TARGET_VERSION>  Patch target version
       --target-release <TARGET_RELEASE>  Patch target release
       --target-license <TARGET_LICENSE>  Patch target license
-  -s, --source <SOURCE>                  source package
+  -s, --source <SOURCE>                  Source package
   -d, --debuginfo <DEBUGINFO>            Debuginfo package
       --workdir <WORKDIR>                Working directory [default: .]
   -o, --output <OUTPUT>                  Generated patch output directory [default: .]
       --kjobs <N>                        Kernel make jobs [default: 32]
       --skip-compiler-check              Skip compiler version check (not recommended)
+  -V, --verbose                          Provide more detailed info
   -h, --help                             Print help information
 ```
 

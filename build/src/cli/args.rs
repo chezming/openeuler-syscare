@@ -38,7 +38,7 @@ pub struct CliArguments {
     #[arg(long)]
     pub target_license: Option<String>,
 
-    /// source package
+    /// Source package
     #[arg(short, long)]
     pub source: String,
 
@@ -61,6 +61,10 @@ pub struct CliArguments {
     /// Skip compiler version check (not recommended)
     #[arg(long, default_value=CLI_DEFAULT_SKIP_COMPILER_CHECK)]
     pub skip_compiler_check: bool,
+
+    /// Provide more detailed info
+    #[arg(short='V', long, default_value=CLI_DEFAULT_VERBOSE_FLAG)]
+    pub verbose: bool,
 
     /// Patch file(s)
     #[arg(required=true)]
