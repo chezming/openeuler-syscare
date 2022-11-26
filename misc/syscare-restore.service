@@ -1,0 +1,12 @@
+[Unit]
+Description=Restore syscare patch status
+Requires=syscare-pre.service
+After=syscare-pre.service
+
+
+[Service]
+ExecStart=sh auto_recovery.sh
+User=root
+Group=root
+Type=oneshot
+RemainAfterExit=yes
