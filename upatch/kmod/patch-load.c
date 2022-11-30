@@ -309,40 +309,68 @@ static void layout_jmptable(struct upatch_module *mod, struct upatch_load_info *
         + info->jmp_max_entry * sizeof(struct upatch_jmp_table_entry);
 }
 
-/* TODO: lock for mm */
-unsigned long get_upatch_pole(unsigned long hint, unsigned long size)
+static unsigned long get_upatch_hole(unsigned long hint_addr, unsigned long len)
 {
-    unsigned long range;
-    unsigned search = hint;
-    struct vm_area_struct *vma = find_vma(current->mm, search);
-    while (vma) {
-        search = vma->vm_end;
-        range = vma->vm_next->vm_start - vma->vm_end;
-        if (range > size)
+    unsigned long ret = 0;
+    unsigned long vma_hole_size;
+
+    struct vm_area_struct *vma = find_vma(current->mm, hint_addr);
+    if (!vma) {
+        pr_err("cannot find vma for address: %lx", hint_addr);
+        return 0;
+    }
+
+    while (vma->vm_next) {
+        vma_hole_size = vma->vm_next->vm_start - vma->vm_end;
+        if (vma_hole_size > len) {
+            ret = vma->vm_end;
             break;
+        }
         vma = vma->vm_next;
     }
-    return search;
+
+    return ret;
 }
 
 /* alloc memory in userspace */
-static void __user *__upatch_module_alloc(unsigned long hint, unsigned long size)
+static void __user *__upatch_module_alloc(unsigned long hint_addr, unsigned long len)
 {
-    unsigned long mem_addr;
-    unsigned long addr = get_upatch_pole(hint, size);
-    if (!addr)
-        return NULL;
+    unsigned long ret;
+    unsigned long upatch_hole_addr;
 
-    mem_addr = vm_mmap(NULL, addr, size,
-        PROT_READ | PROT_WRITE | PROT_EXEC,
-        MAP_ANONYMOUS | MAP_PRIVATE, 0);
-    if (mem_addr != addr) {
-        pr_err("find wrong place 0x%lx <- 0x%lx \n", mem_addr, addr);
-        vm_munmap(mem_addr, size);
+    struct mm_struct *mm = current->mm;
+    unsigned long populate;
+
+    if (mmap_write_lock_killable(mm)) {
+        pr_err("lock mmap failed\n");
         return NULL;
     }
 
-    return (void *)mem_addr;
+    upatch_hole_addr = get_upatch_hole(hint_addr, len);
+    if (!upatch_hole_addr) {
+        mmap_write_unlock(mm);
+        pr_err("unable to find upatch hole\n");
+        return 0;
+    }
+
+    /*
+     * Do not attempt map pages with MAP_POPULATE & VM_LOCKED flag,
+     * since there is no handle for populated pages.
+     */
+    ret = __do_mmap_mm(mm, NULL, upatch_hole_addr, len,
+        PROT_READ | PROT_WRITE | PROT_EXEC,
+        MAP_ANONYMOUS | MAP_PRIVATE,
+        0, 0, &populate, NULL);
+    mmap_write_unlock(current->mm);
+    BUG_ON(populate != 0);
+
+    if (ret != upatch_hole_addr) {
+        pr_err("found wrong place 0x%lx <- 0x%lx\n", ret, upatch_hole_addr);
+        vm_munmap(ret, len);
+        return 0;
+    }
+
+    return (void *)ret;
 }
 
 int __upatch_module_memfree(void __user *addr, unsigned long size)
