@@ -8,6 +8,7 @@ readonly PATCH_INSTALL_DIR="/usr/lib/syscare/patches"
 readonly SYSCARE_PATCH_BUILD="/usr/libexec/syscare/syscare-build"
 readonly UPATCH_TOOL="/usr/libexec/syscare/upatch-tool"
 readonly RECORD_FILE="/usr/lib/syscare/patch-record"
+readonly SYSCARE_VERSION="DEV"
 
 PATCH_LIST=""
 PATCH_NAME=""
@@ -96,7 +97,7 @@ function get_patch_root_by_pkg_name() {
 
 function get_patch_root_by_patch_name() {
 	local patch_name="$1"
-	local has_pkg_name=$(echo $1 | grep "/")
+	local has_pkg_name=$(echo "$1" | grep "/")
 
 	if [ "${has_pkg_name}" == "" ];then
 		for patch_record in ${PATCH_LIST}; do
@@ -146,7 +147,7 @@ function check_kversion() {
 	local kernel_version="kernel-"${kv%.*}
 	local patch_version=$(cat "${PATCH_ROOT}/patch_info" | grep "target" | awk -F ':' '{print $2}' | xargs echo -n)
 	if [ "${kernel_version}" != "${patch_version}" ]; then
-		echo "Patch version mismatches with patch version."
+		echo "Patch version mismatches with kernel version."
 		return 1
 	fi
 
@@ -224,7 +225,7 @@ function deactive_patch() {
 function patch_status() {
 	local patch_name="$1"
 
-	initialize_patch_info ${patch_name} || return 1
+	initialize_patch_info "${patch_name}" || return 1
 
 	echo "${PATCH_STATUS}"
 }
@@ -239,7 +240,9 @@ function usage() {
 	echo -e "  \033[1mactive\033[0m <patch-name>             Activate patch into the running kernel or process" >&2
 	echo -e "  \033[1mdeactive\033[0m <patch-name>           Deactive patch" >&2
 	echo -e "  \033[1mremove\033[0m <patch-name>             Remove the patch in kernel or process" >&2
-	echo -e "  \033[1m-h, --help\033[0m                      Show this help message" >&2
+	echo -e "  \033[1mstatus\033[0m <patch-name>             Show the status of the patch" >&2
+	echo -e "  \033[1mversion\033[0m <patch-name>            Show the version of syscare" >&2
+	echo -e "  \033[1mhelp\033[0m                            Show this help message" >&2
 }
 
 function initialize_patch_list() {
@@ -251,7 +254,7 @@ function initialize_patch_list() {
 function initialize_patch_info() {
 	local patch_name="$1"
 	local patch_root=$(get_patch_root_by_patch_name "${patch_name}")
-	local has_pkg_name=$(echo $1 | grep "/")
+	local has_pkg_name=$(echo "$1" | grep "/")
 
 	if [ ! -e "${RECORD_FILE}" ]; then
 		touch "${RECORD_FILE}"
@@ -383,37 +386,41 @@ function main() {
 	fi
 
 	case "$1" in
-		help	|-h	|--help)
+		help	|--help)
 			usage
 			exit 0
 			;;
-		build	|--build-patch)
+		build)
 			shift
 			do_build "$@"
 			;;
-		apply	|--apply-patch)
+		apply)
 			shift
 			do_apply "$@"
 			;;
-		active	|--active-patch)
+		active)
 			shift
 			do_active "$@"
 			;;
-		deactive	|--deactive-patch)
+		deactive)
 			shift
 			do_deactive "$@"
 			;;
-		remove	|--remove-patch)
+		remove)
 			shift
 			do_remove "$@"
 			;;
-		list	|--all-patch)
+		list)
 			shift
 			do_list "$@"
 			;;
-		status	|--patch-status)
+		status)
 			shift
 			do_status "$@"
+			;;
+		version)
+			shift
+			echo "${SYSCARE_VERSION}"
 			;;
 		*)
 			echo "${SCRIPT_NAME}: Command not found, use --help to get usage." >&2
