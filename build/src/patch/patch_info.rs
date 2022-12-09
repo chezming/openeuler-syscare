@@ -6,7 +6,7 @@ use lazy_static::*;
 
 use crate::constants::*;
 use crate::log::*;
-use crate::util::fs;
+use crate::util::{sys, fs};
 
 use crate::package::PackageInfo;
 use crate::cli::CliArguments;
@@ -58,6 +58,8 @@ impl std::str::FromStr for PatchName {
         })
     }
 }
+
+pub type PatchTargetName = PatchName;
 
 #[derive(Clone, Copy)]
 #[derive(Debug)]
@@ -153,24 +155,12 @@ impl PatchFile {
         &self.name
     }
 
-    pub fn set_name(&mut self, value: String) {
-        self.name = value;
-    }
-
     pub fn get_path(&self) -> &str {
         &self.path
     }
 
-    pub fn set_path(&mut self, value: String) {
-        self.path = value;
-    }
-
     pub fn get_digest(&self) -> &str {
         &self.digest
-    }
-
-    pub fn set_digest(&mut self, value: String) {
-        self.digest = value
     }
 }
 
@@ -179,7 +169,8 @@ impl PatchFile {
 pub struct PatchInfo {
     patch:           PatchName,
     patch_type:      PatchType,
-    target:          PatchName,
+    patch_arch:      String,
+    target:          PatchTargetName,
     target_elf_name: String,
     license:         String,
     description:     String,
@@ -196,7 +187,11 @@ impl PatchInfo {
         self.patch_type
     }
 
-    pub fn get_target(&self) -> &PatchName {
+    pub fn get_patch_arch(&self) -> &str {
+        &self.patch_arch
+    }
+
+    pub fn get_target(&self) -> &PatchTargetName {
         &self.target
     }
 
@@ -228,6 +223,10 @@ impl PatchInfo {
             version: args.patch_version.to_owned(),
             release: fs::sha256_digest_file_list(&args.patches)?[..PATCH_VERSION_DIGITS].to_string(),
         })
+    }
+
+    fn parse_patch_arch() -> String {
+        sys::get_cpu_arch().to_owned()
     }
 
     fn parse_patch_type(pkg_info: &PackageInfo) -> PatchType {
@@ -281,6 +280,7 @@ impl PatchInfo {
         Ok(PatchInfo {
             patch:           Self::parse_patch(args)?,
             patch_type:      Self::parse_patch_type(pkg_info),
+            patch_arch:      Self::parse_patch_arch(),
             target:          Self::parse_target(args),
             target_elf_name: Self::parse_target_elf_name(args),
             license:         Self::parse_license(args),
@@ -295,6 +295,7 @@ impl std::fmt::Display for PatchInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("name:        {}\n", self.get_patch().get_name()))?;
         f.write_fmt(format_args!("type:        {}\n", self.get_patch_type()))?;
+        f.write_fmt(format_args!("arch:        {}\n", self.get_patch_arch()))?;
         f.write_fmt(format_args!("target:      {}\n", self.get_target()))?;
         f.write_fmt(format_args!("elf_name:    {}\n", self.get_target_elf_name()))?;
         f.write_fmt(format_args!("license:     {}\n", self.get_license()))?;
