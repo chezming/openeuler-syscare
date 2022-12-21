@@ -223,7 +223,7 @@ static struct miscdevice upatch_dev = {
 	.minor	= MISC_DYNAMIC_MINOR,
 	.name	= UPATCH_DEV_NAME,
 	.fops	= &upatch_ops,
-    .mode   = 0666,
+    .mode   = 0660,
 };
 
 static int __init upatch_init(void)
