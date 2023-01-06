@@ -15,8 +15,11 @@ pub struct ExternCommandExitStatus {
 }
 
 impl ExternCommandExitStatus {
-    pub fn exit_code(&self) -> i32 {
-        self.exit_status.code().expect("Get process exit code failed")
+    pub fn exit_code(&self) -> String {
+        match self.exit_status.code() {
+            Some(code) => code.to_string(),
+            None => String::from("None"),
+        }
     }
 
     pub fn exit_status(&self) -> ExitStatus {
@@ -43,10 +46,15 @@ impl ExternCommand<'_> {
     pub fn execute_command(&self, command: &mut Command) -> std::io::Result<ExternCommandExitStatus> {
         let mut last_stdout = String::new();
         let mut last_stderr = String::new();
-        let mut child_process = command
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+        let mut child_process = match command.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+            Ok(child_process) => child_process,
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound{
+                    return Err(std::io::Error::new(std::io::ErrorKind::NotFound, format!("can't find command: {}", self.path)));
+                }
+                return Err(e);
+            }
+        };
 
         trace!("Executing '{}' ({:?}):", &self, command);
         let process_stdout = child_process.stdout.as_mut().expect("Pipe stdout failed");
@@ -64,7 +72,10 @@ impl ExternCommand<'_> {
         }
 
         let exit_status = child_process.wait()?;
-        trace!("Process ({}) exited, exit_code={}\n", &self, exit_status.code().expect("get code error"));
+        match exit_status.code() {
+            Some(code) => trace!("Process ({}) exited, exit_code={}\n", &self, code),
+            None => trace!("Process ({}) exited, exit_code=None\n", &self),
+        }
 
         Ok(ExternCommandExitStatus {
             exit_status,
