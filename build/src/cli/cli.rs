@@ -169,9 +169,11 @@ impl PatchBuildCLI {
                 }
             }
         }
-
-        // Collect patch target info from patched source package
-        let patch_target_file = fs::find_file(pkg_source_dir, PKG_TARGET_FILE_NAME, false, false);
+	
+	let debug_pkg_dir = self.workdir.package_root().debug_pkg_dir();
+	
+        // Collect patch target info from patched debuginfo package
+        let patch_target_file = fs::find_file(debug_pkg_dir, PKG_TARGET_FILE_NAME, false, false);
         match &patch_target_file {
             Ok(file_path) => {
                 let patch_target = fs::read_file_to_string(file_path)?.parse::<PackageInfo>()?;
@@ -211,13 +213,20 @@ impl PatchBuildCLI {
         let args = &self.args;
 
         if !dbg_pkg_info.get_name().contains(src_pkg_info.get_name()) ||
-           (src_pkg_info.get_arch()    != dbg_pkg_info.get_arch())    ||
            (src_pkg_info.get_epoch()   != dbg_pkg_info.get_epoch())   ||
            (src_pkg_info.get_version() != dbg_pkg_info.get_version()) ||
            (src_pkg_info.get_release() != dbg_pkg_info.get_release()) {
                 return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 format!("Debuginfo package does not match the source package"),
+            ));
+        }
+
+        let dbg_arch = dbg_pkg_info.get_arch();
+        if dbg_arch != sys::get_cpu_arch(){
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Debuginfo arch '{}' is unsupported", dbg_arch),
             ));
         }
 
