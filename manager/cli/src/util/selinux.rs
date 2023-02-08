@@ -18,7 +18,7 @@ pub fn set_enforce(value: u32) -> std::io::Result<()> {
             format!("set enforce failed, value \"{}\" is invalid", value)
         ));
     }
-    fs::write_string_to_file(SELINUX_ENFORCE_FILE, &value.to_string()).map_err(|e| {
+    fs::write(SELINUX_ENFORCE_FILE, value.to_string()).map_err(|e| {
         std::io::Error::new(
             e.kind(),
             format!("set enforce failed, {}", e.to_string())
@@ -27,7 +27,7 @@ pub fn set_enforce(value: u32) -> std::io::Result<()> {
 }
 
 pub fn get_enforce() -> std::io::Result<u32> {
-    match fs::read_file_to_string(SELINUX_ENFORCE_FILE) {
+    match fs::read_to_string(SELINUX_ENFORCE_FILE) {
         Ok(status) => {
             Ok(status.parse().unwrap_or(SELINUX_PERMISSIVE))
         },
@@ -57,7 +57,7 @@ where P: AsRef<Path>
 
     let mut buf = [0u8; BUF_SIZE];
 
-    let file  = fs::realpath(file_path)?;
+    let file  = fs::canonicalize(file_path)?;
     let path  = file.as_os_str().as_bytes().as_ptr() as *const libc::c_char;
     let name  = SELINUX_SECURITY_CONTEXT.as_ptr() as *const libc::c_char;
     let value = buf.as_mut_ptr() as *mut libc::c_void;
@@ -67,6 +67,7 @@ where P: AsRef<Path>
         if len <= 0 {
             return Err(std::io::Error::last_os_error());
         }
+        // FIXME: String::from_utf8_lossy() may loss non UTF-8 chars
         String::from_utf8_lossy(&buf[0..len as usize]).to_string()
     };
 
@@ -76,7 +77,7 @@ where P: AsRef<Path>
 pub fn write_security_context<P>(file_path: P, scontext: &str) -> std::io::Result<()>
 where P: AsRef<Path>
 {
-    let file  = fs::realpath(file_path)?;
+    let file  = fs::canonicalize(file_path)?;
     let path  = file.as_os_str().as_bytes().as_ptr() as *const libc::c_char;
     let name  = SELINUX_SECURITY_CONTEXT.as_ptr() as *const libc::c_char;
     let value = scontext.as_ptr() as *const libc::c_void;
