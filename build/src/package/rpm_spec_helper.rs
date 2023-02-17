@@ -15,9 +15,8 @@ impl RpmSpecHelper {
         let target = patch_info.get_target();
 
         let tag_name  = orig_release_tag.get_name().to_string();
-        let tag_value = format!("{}.{}.{}.{}.{}",
+        let tag_value = format!("{}.{}.{}.{}",
             target.get_release(),
-            PKG_FLAG_PATCHED_SOURCE,
             patch_info.get_name(),
             patch_info.get_version(),
             patch_info.get_release()
@@ -58,8 +57,8 @@ impl RpmSpecHelper {
         source_tag_list
     }
 
-    pub fn modify_spec_file_by_patches<P: AsRef<Path>>(spec_file_path: P, patch_info: &PatchInfo) -> std::io::Result<()> {
-        let mut spec_file_content = fs::read_file_content(&spec_file_path)?;
+    pub fn modify_spec_file_by_patches<P: AsRef<Path>>(spec_file: P, patch_info: &PatchInfo) -> std::io::Result<()> {
+        let mut spec_file_content = fs::read_file_content(&spec_file)?;
         let mut orig_release_tag = None;
         let mut source_tags = BTreeSet::new();
 
@@ -99,7 +98,7 @@ impl RpmSpecHelper {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!("Parse rpm spec file '{}' failed, cannot find tag 'Release'",
-                        spec_file_path.as_ref().display()
+                        spec_file.as_ref().display()
                     ),
                 ));
             }
@@ -122,7 +121,7 @@ impl RpmSpecHelper {
         }
 
         // Write to file
-        fs::write_file_content(&spec_file_path, spec_file_content)?;
+        fs::write_file_content(&spec_file, spec_file_content)?;
 
         Ok(())
     }
