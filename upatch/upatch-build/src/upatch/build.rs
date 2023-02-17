@@ -1,8 +1,8 @@
-use std::path::Path;
+use std::os::unix::prelude::OsStrExt;
+use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Read;
-use std::string::String;
 use std::process::exit;
 use std::thread;
 use std::sync::Arc;
@@ -12,13 +12,14 @@ use signal_hook::{iterator::Signals, consts::SIGINT};
 
 use crate::log::*;
 use crate::tool::*;
-use crate::dwarf::{Dwarf, DwarfCompileUnit};
-use crate::cmd::ExternCommand;
+use crate::dwarf::Dwarf;
 
 use super::Arguments;
 use super::Compiler;
 use super::WorkDir;
 use super::Project;
+use super::OutputConfig;
+use super::Tool;
 use super::Result;
 use super::Error;
 
@@ -26,18 +27,16 @@ pub const UPATCH_DEV_NAME: &str = "upatch";
 const SYSTEM_MOUDLES: &str = "/proc/modules";
 const CMD_SOURCE_ENTER: &str = "SE";
 const CMD_PATCHED_ENTER: &str = "PE";
-const SUPPORT_DIFF: &str = "upatch-diff";
-const SUPPORT_TOOL: &str = "upatch-tool";
-const SUPPORT_NOTES: &str = "upatch-notes";
 
 pub struct UpatchBuild {
     args: Arguments,
     work_dir: WorkDir,
     compiler: Compiler,
-    diff_file: String,
-    tool_file: String,
-    notes_file: String,
+    tool: Tool,
     hack_flag: Arc<AtomicBool>,
+    dwarf: Dwarf,
+    source_obj: HashMap<PathBuf, PathBuf>,
+    patch_obj: HashMap<PathBuf, PathBuf>,
 }
 
 impl UpatchBuild {
@@ -46,35 +45,32 @@ impl UpatchBuild {
             args: Arguments::new(),
             work_dir: WorkDir::new(),
             compiler: Compiler::new(),
-            diff_file: String::new(),
-            tool_file: String::new(),
-            notes_file: String::new(),
+            tool: Tool::new(),
             hack_flag: Arc::new(AtomicBool::new(false)),
+            dwarf: Dwarf::new(),
+            source_obj: HashMap::new(),
+            patch_obj: HashMap::new(),
         }
     }
 
     pub fn run(&mut self) -> Result<()> {
         self.args.check()?;
 
-        self.work_dir.create_dir(self.args.work_dir.clone())?;
+        self.work_dir.create_dir(self.args.work_dir.as_ref().unwrap())?;
+        self.args.output_dir.get_or_insert(self.work_dir.cache_dir().to_path_buf());
         self.init_logger()?;
 
         // check mod
         self.check_mod()?;
 
         // find upatch-diff and upatch-tool
-        self.diff_file = search_tool(SUPPORT_DIFF)?;
-        self.tool_file = search_tool(SUPPORT_TOOL)?;
-        self.notes_file = search_tool(SUPPORT_NOTES)?;
+        self.tool.check()?;
 
         // check compiler
-        self.compiler.analyze(self.args.compiler.clone())?;
+        self.compiler.analyze(self.args.compiler.as_ref().unwrap())?;
         if !self.args.skip_compiler_check {
-            self.compiler.check_version(self.work_dir.cache_dir(), &self.args.debug_info)?;
+            self.compiler.check_version(self.work_dir.cache_dir(), &self.args.debug_infoes[0])?;
         }
-
-        // copy source
-        let project_name = &Path::new(&self.args.debug_source).file_name().unwrap();
 
         // hack compiler
         info!("Hacking compiler");
@@ -82,19 +78,21 @@ impl UpatchBuild {
         self.compiler.hack()?;
         self.hack_flag.store(true, Ordering::Relaxed);
 
+        let project_name = self.args.debug_source.file_name().unwrap();
+
         // build source
-        info!("Building original {}", project_name.to_str().unwrap());
-        let project = Project::new(self.args.debug_source.clone());
-        project.build(CMD_SOURCE_ENTER, self.work_dir.source_dir(), self.args.build_source_cmd.clone())?;
+        info!("Building original {:?}", project_name);
+        let project = Project::new(&self.args.debug_source);
+        project.build(CMD_SOURCE_ENTER, self.work_dir.source_dir(), self.work_dir.binary_dir(), self.args.build_source_cmd.clone())?;
 
         // build patch
         for patch in &self.args.patches {
-            info!("Patching file: {}", &patch);
-            project.patch(patch.clone(), self.args.verbose)?;
+            info!("Patching file: {}", patch.display());
+            project.patch(patch, self.args.verbose)?;
         }
 
-        info!("Building patched {}", project_name.to_str().unwrap());
-        project.build(CMD_PATCHED_ENTER, self.work_dir.patch_dir(), self.args.build_patch_cmd.clone())?;
+        info!("Building patched {:?}", project_name);
+        project.build(CMD_PATCHED_ENTER, self.work_dir.patch_dir(), self.work_dir.binary_dir(), self.args.build_patch_cmd.clone())?;
 
         // unhack compiler
         info!("Unhacking compiler");
@@ -103,26 +101,9 @@ impl UpatchBuild {
 
         info!("Detecting changed objects");
         // correlate obj name
-        let mut source_obj: HashMap<String, String> = HashMap::new();
-        let mut patch_obj: HashMap<String, String> = HashMap::new();
-        let dwarf = Dwarf::new();
-
-        self.correlate_obj(&dwarf, self.args.debug_source.as_str(), self.work_dir.source_dir(), &mut source_obj)?;
-        self.correlate_obj(&dwarf, self.args.debug_source.as_str(), self.work_dir.patch_dir(), &mut patch_obj)?;
-
-        // choose the binary's obj to create upatch file
-        let binary_obj = dwarf.file_in_binary(self.args.debug_source.clone(), self.args.elf_name.clone())?;
-        self.create_diff(&source_obj, &patch_obj, &binary_obj)?;
-
-        // build notes.o
-        let notes = format!("{}/notes.o", self.work_dir.output_dir());
-        self.upatch_notes(&notes)?;
-
-        // ld patchs
-        let output_file = format!("{}/{}", &self.args.output_dir, &self.args.patch_name);
-        info!("Building patch: {}", &output_file);
-        self.compiler.linker(self.work_dir.output_dir(), &output_file)?;
-        self.upatch_tool(&output_file)?;
+        self.source_obj = self.correlate_obj(&self.args.debug_source, self.work_dir.source_dir())?;
+        self.patch_obj = self.correlate_obj(&self.args.debug_source, self.work_dir.patch_dir())?;
+        self.build_patches(&self.args.debug_infoes)?;
         Ok(())
     }
 
@@ -162,27 +143,35 @@ impl UpatchBuild {
         }
     }
 
-    fn correlate_obj(&self, dwarf: &Dwarf, comp_dir: &str, dir: &str, map: &mut HashMap<String, String>) -> Result<()> {
-        let arr = list_all_files_ext(dir, "o", false)?;
+    fn correlate_obj<P: AsRef<Path>, Q: AsRef<Path>>(&self, compiler_dir: P, output_dir: Q) -> Result<HashMap<PathBuf, PathBuf>> {
+        let compiler_dir = compiler_dir.as_ref();
+        let mut map =  HashMap::new();
+        let arr = list_all_files_ext(output_dir, "o", false)?;
         for obj in arr {       
-            let name = stringtify(obj);
-            let result = dwarf.file_in_obj(name.clone())?;
-            if result.len() == 1 && result[0].DW_AT_comp_dir.find(comp_dir) != None{
-                map.insert(result[0].get_source(), name.clone());
+            let result = self.dwarf.file_in_obj(&obj)?;
+            if result.len() == 1 && result[0].DW_AT_comp_dir.starts_with(compiler_dir) {
+                map.insert(result[0].get_source(), obj);
             }
         }
-        Ok(())
+        Ok(map)
     }
 
-    fn create_diff(&self, source_obj: &HashMap<String, String>, patch_obj: &HashMap<String, String>, binary_obj: &Vec<DwarfCompileUnit>) -> Result<()> {
-        for path in binary_obj {
+    fn create_diff<B, P, Q>(&self, binary_file: B, diff_dir: P, debug_info: Q) -> Result<()>
+    where
+        B: AsRef<Path>,
+        P: AsRef<Path>,
+        Q: AsRef<Path>,
+    {
+        let diff_dir = diff_dir.as_ref().to_path_buf();
+        let binary_obj = self.dwarf.file_in_obj(&binary_file)?;
+        for path in &binary_obj {
             let source_name = path.get_source();
-            match &patch_obj.get(&source_name) {
+            match &self.patch_obj.get(&source_name) {
                 Some(patch) => {
-                    let output_dir = format!("{}/{}", self.work_dir.output_dir(), file_name(patch)?);
-                    match &source_obj.get(&source_name) {
-                        Some(source) => self.upatch_diff(source, patch, &output_dir)?,
-                        None => { fs::copy(&patch, output_dir)?; },
+                    let output = diff_dir.join(file_name(&patch)?);
+                    match &self.source_obj.get(&source_name) {
+                        Some(source) => self.tool.upatch_diff(&source, &patch, &output, &debug_info, &self.work_dir.log_file(), self.args.verbose)?,
+                        None => { fs::copy(&patch, output)?; },
                     };
                 },
                 None => {},
@@ -191,33 +180,61 @@ impl UpatchBuild {
         Ok(())
     }
 
-    fn upatch_diff(&self, source: &str, patch: &str, output_dir: &str) -> Result<()> {
-        let mut args_list = vec!["-s", &source, "-p", &patch, "-o", &output_dir, "-r", &self.args.debug_info];
-        if self.args.verbose {
-            args_list.push("-d");
+    fn build_patch<P, Q, D>(&self, debug_info: P, binary: Q, diff_dir: D, output_config: &mut OutputConfig) -> Result<()>
+    where
+        P: AsRef<Path>,
+        Q: AsRef<Path>,
+        D: AsRef<Path>,
+    {
+        let diff_dir = diff_dir.as_ref();
+        let binary = binary.as_ref().to_path_buf();
+
+        let mut binding = self.args.name.clone();
+        let output_file = self.args.output_dir.as_ref().unwrap().join(binding.concat(&binary));
+
+        let mut link_args = list_all_files_ext(diff_dir, "o", false)?;
+        match link_args.len() {
+            0 => {
+                info!("Building patch: {}: no functional changes found", output_file.display());
+                return Ok(());
+            },
+            _ => info!("Building patch: {}", output_file.display()),
+        };
+
+        // build notes.o
+        let notes = diff_dir.join("notes.o");
+        self.tool.upatch_notes(&notes, &debug_info)?;
+        link_args.push(notes);
+
+        // ld patchs
+        self.compiler.linker(&link_args, &output_file)?;
+        self.tool.upatch_tool(&output_file, &debug_info)?;
+        output_config.push(&binary);
+        Ok(())
+    }
+
+    fn build_patches<P: AsRef<Path>>(&self, debug_infoes: &Vec<P>) -> Result<()> {
+        let mut output_config = OutputConfig::new();
+        let binary_files = list_all_files(self.work_dir.binary_dir(), false)?;
+        for debug_info in debug_infoes {
+            let debug_info_name = file_name(debug_info)?;
+            let mut not_found = true;
+            for binary_file in &binary_files {
+                let binary_name = file_name(binary_file)?;
+                if debug_info_name.contains(binary_name.as_bytes()) {
+                    let diff_dir = self.work_dir.output_dir().to_path_buf().join(&binary_name);
+                    fs::create_dir(&diff_dir)?;
+                    self.create_diff(&binary_file, &diff_dir, debug_info)?;
+                    self.build_patch(debug_info, &binary_name, &diff_dir, &mut output_config)?;
+                    not_found = false;
+                    break;
+                }
+            }
+            if not_found {
+                return Err(Error::Build(format!("don't have binary match {}", debug_info.as_ref().display())));
+            }
         }
-        let output = ExternCommand::new(&self.diff_file).execvp(args_list)?;
-        if !output.exit_status().success() {
-            return Err(Error::Diff(format!("{}: please look {} for detail.", output.exit_code(), self.work_dir.log_file())))
-        };
-        Ok(())
-    }
-
-    fn upatch_tool(&self, patch: &str) -> Result<()> {
-        let args_list = vec!["resolve", "-b", &self.args.debug_info, "-p", patch];
-        let output = ExternCommand::new(&self.tool_file).execvp(args_list)?;
-        if !output.exit_status().success() {
-            return Err(Error::TOOL(format!("{}: {}", output.exit_code(), output.stderr())))
-        };
-        Ok(())
-    }
-
-    fn upatch_notes(&self, notes: &str) -> Result<()> {
-        let args_list = vec!["-r", &self.args.debug_info, "-o", notes];
-        let output = ExternCommand::new(&self.notes_file).execvp(args_list)?;
-        if !output.exit_status().success() {
-            return Err(Error::NOTES(format!("{}: {}", output.exit_code(), output.stderr())))
-        };
+        output_config.create(self.args.output_dir.as_ref().unwrap())?;
         Ok(())
     }
 
