@@ -10,7 +10,7 @@ pub struct UserPatchHelper;
 
 impl UserPatchHelper {
     pub fn find_debuginfo_file<P: AsRef<Path>>(directory: P) -> std::io::Result<Vec<PathBuf>> {
-        debug!("Finding debuginfo from '{}'", directory.as_ref().display());
+        debug!("Finding debuginfo from \"{}\"", directory.as_ref().display());
 
         fs::list_all_files_ext(
             directory,
@@ -20,6 +20,8 @@ impl UserPatchHelper {
     }
 
     pub fn query_pkg_file_list<P: AsRef<Path>>(pkg_path: P) -> std::io::Result<Vec<PathBuf>> {
+        debug!("Reading package file list from \"{}\"", pkg_path.as_ref().display());
+
         let file_list_str = RpmHelper::query_package_info(pkg_path, "[%{FILENAMES} ]")?;
         let file_list = file_list_str.trim_end()
             .split(" ")
