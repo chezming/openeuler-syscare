@@ -12,7 +12,7 @@ pub struct RpmSpecHelper;
 
 impl RpmSpecHelper {
     fn create_new_release_tag(orig_release_tag: RpmSpecTag, patch_info: &PatchInfo) -> RpmSpecTag {
-        let tag_name  = orig_release_tag.get_name().to_string();
+        let tag_name  = orig_release_tag.get_name();
         let tag_value = format!("{}.{}.{}.{}",
             patch_info.target.release,
             patch_info.name,
@@ -20,11 +20,14 @@ impl RpmSpecHelper {
             patch_info.release
         );
 
-        RpmSpecTag::new_tag(tag_name, tag_value)
+        RpmSpecTag::new_tag(
+            tag_name.to_owned(),
+            tag_value
+        )
     }
 
     fn create_new_source_tags(start_tag_id: usize, patch_info: &PatchInfo) -> Vec<RpmSpecTag> {
-        let tag_name = PKG_SPEC_TAG_NAME_SOURCE;
+        let tag_name = PKG_SPEC_TAG_SOURCE;
 
         let mut source_tag_list = Vec::new();
         let mut tag_id = start_tag_id + 1;
@@ -41,7 +44,7 @@ impl RpmSpecHelper {
             tag_id += 1;
         }
 
-        // If the package is patched, generate files to record patch info
+        // If the source package is not patched, generate files to record patch info
         if !patch_info.is_patched {
             source_tag_list.push(RpmSpecTag::new_id_tag(
                 tag_name.to_owned(),
@@ -54,20 +57,23 @@ impl RpmSpecHelper {
     }
 
     pub fn modify_spec_file_by_patches<P: AsRef<Path>>(spec_file: P, patch_info: &PatchInfo) -> std::io::Result<()> {
-        let mut spec_file_content = fs::read_file_content(&spec_file)?;
+        let mut spec_file_content = fs::read_to_string(&spec_file)?
+            .split('\n')
+            .map(String::from)
+            .collect::<Vec<_>>();
+
         let mut orig_release_tag = None;
         let mut source_tags = BTreeSet::new();
-
         // Parse whole file
         let mut current_line_num = 0usize;
         for current_line in &spec_file_content {
-            if let Some(_) = RpmSpecParser::parse_tag(&current_line, PKG_SPEC_TAG_NAME_BUILD_REQUIRES) {
+            if let Some(_) = RpmSpecParser::parse_tag(&current_line, PKG_SPEC_TAG_BUILD_REQUIRES) {
                 break;
             }
 
             // If the release tag is not parsed, do parse
             if orig_release_tag.is_none() {
-                if let Some(tag) = RpmSpecParser::parse_tag(&current_line, PKG_SPEC_TAG_NAME_RELEASE) {
+                if let Some(tag) = RpmSpecParser::parse_tag(&current_line, PKG_SPEC_TAG_RELEASE) {
                     orig_release_tag = Some((current_line_num, tag));
                     current_line_num += 1;
                     continue; // Since parsed release tag, the other tag would not be parsed
@@ -75,7 +81,7 @@ impl RpmSpecHelper {
             }
 
             // Add parsed source tag into the btree set
-            if let Some(tag) = RpmSpecParser::parse_id_tag(&current_line, PKG_SPEC_TAG_NAME_SOURCE) {
+            if let Some(tag) = RpmSpecParser::parse_id_tag(&current_line, PKG_SPEC_TAG_SOURCE) {
                 source_tags.insert(tag);
                 current_line_num += 1;
                 continue;
@@ -117,8 +123,13 @@ impl RpmSpecHelper {
         }
 
         // Write to file
-        fs::write_file_content(&spec_file, spec_file_content)?;
-
-        Ok(())
+        fs::write(
+            spec_file,
+            spec_file_content.into_iter()
+                .flat_map(|mut s| {
+                    s.push('\n');
+                    s.into_bytes()
+                }).collect::<Vec<_>>()
+        )
     }
 }

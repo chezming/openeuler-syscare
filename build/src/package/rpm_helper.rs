@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use log::debug;
@@ -7,14 +8,12 @@ use crate::util::fs;
 
 use crate::workdir::PackageBuildRoot;
 use crate::patch::{PatchType, PatchInfo};
-use crate::cmd::ExternCommandArgs;
+use crate::ext_cmd::ExternCommandArgs;
 
 pub struct RpmHelper;
 
 impl RpmHelper {
-    pub fn query_package_info<P: AsRef<Path>>(pkg_path: P, format: &str) -> std::io::Result<String> {
-        fs::check_file(&pkg_path)?;
-
+    pub fn query_package_info<P: AsRef<Path>>(pkg_path: P, format: &str) -> std::io::Result<OsString> {
         let exit_status = RPM.execvp(
             ExternCommandArgs::new()
                 .arg("--query")
@@ -38,9 +37,9 @@ impl RpmHelper {
         debug!("Finding package build root from \"{}\"", directory.as_ref().display());
 
         Ok(PackageBuildRoot::new(
-            fs::find_directory(
+            fs::find_dir(
                 directory,
-                PKG_BUILD_ROOT_DIR_NAME,
+                PKG_BUILD_ROOT,
                 false,
                 true
             )?
@@ -52,7 +51,7 @@ impl RpmHelper {
 
         let spec_file = fs::find_file_ext(
             directory,
-            PKG_SPEC_FILE_EXTENSION,
+            PKG_SPEC_EXTENSION,
             false
         )?;
 
@@ -67,7 +66,7 @@ impl RpmHelper {
             PatchType::KernelPatch => KERNEL_SOURCE_DIR_PREFIX,
         };
 
-        let find_source_result = fs::find_directory(
+        let find_source_result = fs::find_dir(
             &directory,
             search_name,
             true,
@@ -79,7 +78,7 @@ impl RpmHelper {
                 Ok(source_dir)
             },
             Err(_) => {
-                fs::find_directory(
+                fs::find_dir(
                     &directory,
                     "",
                     true,

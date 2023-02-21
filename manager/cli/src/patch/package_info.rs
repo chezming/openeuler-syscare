@@ -22,13 +22,13 @@ impl std::fmt::Display for PackageType {
 #[derive(Serialize, Deserialize)]
 #[derive(Clone)]
 pub struct PackageInfo {
-    pub name:      String,
-    pub kind:      PackageType,
-    pub arch:      String,
-    pub epoch:     String,
-    pub version:   String,
-    pub release:   String,
-    pub license:   String,
+    pub name:    String,
+    pub kind:    PackageType,
+    pub arch:    String,
+    pub epoch:   String,
+    pub version: String,
+    pub release: String,
+    pub license: String,
 }
 
 impl PackageInfo {
@@ -52,7 +52,7 @@ impl PackageInfo {
         if exit_status.exit_code() != 0 {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
-                format!("package \"{}\" is not installed", pkg_name)
+                format!("Package \"{}\" is not installed", pkg_name)
             ));
         }
 
