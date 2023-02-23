@@ -44,6 +44,8 @@ pub enum Command {
     },
     /// Restore all patch status from record
     Restore,
+    /// Reboot system rapidly
+    FastReboot,
 }
 
 pub trait CommandExecutor {
