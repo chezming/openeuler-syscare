@@ -1,7 +1,7 @@
 use std::ffi::{OsString, OsStr};
 use std::path::{Path, PathBuf};
 
-use crate::ext_cmd::{ExternCommand, ExternCommandArgs};
+use crate::util::ext_cmd::{ExternCommand, ExternCommandArgs};
 
 use super::patch::Patch;
 use super::patch_status::PatchStatus;
@@ -78,7 +78,7 @@ impl<'a> UserPatchAdapter<'a> {
         else {
             Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Status \"{}\" is invalid", stdout.to_string_lossy())
+                format!("Patch status \"{}\" is invalid", stdout.to_string_lossy())
             ))
         }
     }
