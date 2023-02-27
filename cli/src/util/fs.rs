@@ -451,3 +451,18 @@ pub fn copy_dir_all<P: AsRef<Path>, Q: AsRef<Path>>(src_dir: P, dst_dir: Q) -> s
 
     Ok(())
 }
+
+pub fn sync() {
+    unsafe { libc::sync() }
+}
+
+pub fn fsync<P>(path: P) -> std::io::Result<()>
+where
+    P: AsRef<Path>
+{
+    self::open_file(&path)?.sync_all().rewrite_err(
+        format!("Cannot sync path \"{}\"",
+            path.as_ref().display(),
+        )
+    )
+}

@@ -90,6 +90,11 @@ impl SyscareCLI {
                 cmd_executor = Box::new(RestoreCommandExecutor {}) as Box<dyn CommandExecutor>;
                 cmd_args = vec![];
             },
+            Command::FastReboot => {
+                Self::check_root_permission()?;
+                cmd_executor = Box::new(FastRebootCommandExecutor {}) as Box<dyn CommandExecutor>;
+                cmd_args = vec![];
+            },
         };
 
         Ok(cmd_executor.invoke(&cmd_args)?)
