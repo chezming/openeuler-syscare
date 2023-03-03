@@ -28,11 +28,7 @@ impl<'a> UserPatchAdapter<'a> {
     }
 
     fn get_patch_file<S: AsRef<OsStr>>(&self, elf_name: S) -> PathBuf {
-        let mut patch_file_name = OsString::from(&self.patch.short_name());
-        patch_file_name.push("-");
-        patch_file_name.push(elf_name);
-
-        self.patch.root_dir.join(patch_file_name)
+        self.patch.root_dir.join(elf_name.as_ref())
     }
 
     fn do_action<P: AsRef<Path>>(&self, action: &str, patch: P) -> std::io::Result<OsString> {
@@ -43,6 +39,7 @@ impl<'a> UserPatchAdapter<'a> {
                     .arg(patch.as_ref())
         )?;
 
+        exit_status.check_exit_code()?;
         Ok(exit_status.stdout().to_owned())
     }
 
@@ -90,10 +87,21 @@ impl PatchActionAdapter for UserPatchAdapter<'_> {
     }
 
     fn status(&self) -> std::io::Result<PatchStatus> {
+        // Fetch all patches status
         let mut status_list = Vec::new();
         for (elf_name, _) in &self.patch.target_elfs {
             status_list.push(self.get_patch_status(elf_name)?);
         }
+        // Check if all patch status are same
+        status_list.sort();
+        status_list.dedup();
+        if status_list.len() != 1 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Patch \"{}\" status is out of sync", self.patch)
+            ));
+        }
+
         Ok(status_list[0])
     }
 

@@ -1,12 +1,7 @@
-use std::ffi::OsString;
-use std::path::PathBuf;
-
-use crate::constants::*;
-
 use crate::cli::{CliWorkDir, CliArguments};
 use crate::package::RpmHelper;
 use crate::patch::{PatchInfo, PatchBuilder, PatchBuilderArguments};
-use crate::util::ext_cmd::{ExternCommandArgs, ExternCommandEnvs};
+use crate::util::ext_cmd::{ExternCommand, ExternCommandArgs, ExternCommandEnvs};
 
 use super::kpatch_helper::KernelPatchHelper;
 use super::kpatch_builder_args::KernelPatchBuilderArguments;
@@ -69,7 +64,7 @@ impl PatchBuilder for KernelPatchBuilder<'_> {
 
         KernelPatchHelper::generate_defconfig(&kernel_source_dir)?;
         let kernel_config_file = KernelPatchHelper::find_kernel_config(&kernel_source_dir)?;
-        let vmlinux_file = KernelPatchHelper::find_vmlinux_file(debug_pkg_dir)?;
+        let vmlinux_file = KernelPatchHelper::find_vmlinux(debug_pkg_dir)?;
 
         let builder_args = KernelPatchBuilderArguments {
             build_root:          patch_build_root.to_owned(),
@@ -87,29 +82,20 @@ impl PatchBuilder for KernelPatchBuilder<'_> {
     }
 
     fn build_patch(&self, args: &PatchBuilderArguments) -> std::io::Result<()> {
+        const KPATCH_BUILD: ExternCommand = ExternCommand::new("kpatch-build");
+
         match args {
             PatchBuilderArguments::KernelPatch(kargs) => {
-                let exit_status = KPATCH_BUILD.execve(
+                KPATCH_BUILD.execve(
                     self.parse_cmd_args(kargs),
                     self.parse_cmd_envs(kargs)
-                )?;
-
-                let exit_code = exit_status.exit_code();
-                if exit_code != 0 {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        format!("Process \"{}\" exited unsuccessfully, exit_code={}", KPATCH_BUILD, exit_code),
-                    ));
-                }
-
-                Ok(())
+                )?.check_exit_code()
             },
             PatchBuilderArguments::UserPatch(_) => unreachable!(),
         }
     }
 
-    fn write_patch_info(&self, patch_info: &mut PatchInfo, _args: &PatchBuilderArguments) -> std::io::Result<()> {
-        patch_info.target_elfs.extend([(OsString::from(KERNEL_VMLINUX_FILE), PathBuf::from(""))]);
+    fn write_patch_info(&self, _: &mut PatchInfo, _: &PatchBuilderArguments) -> std::io::Result<()> {
         Ok(())
     }
 }

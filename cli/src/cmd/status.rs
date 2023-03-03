@@ -1,19 +1,25 @@
-use log::{info, debug};
+use log::info;
 
-use crate::patch::PatchManager;
+use crate::patch::{PatchManager, PatchStatus};
 
-use super::CommandExecutor;
+use super::{CommandExecutor, CommandArguments};
 
 pub struct StatusCommandExecutor;
 
 impl CommandExecutor for StatusCommandExecutor {
-    fn invoke(&self, args: &[String]) -> std::io::Result<i32> {
-        let patch_manager = PatchManager::new()?;
-        debug!("Handle Command \"status {}\"", args[0]);
+    fn invoke(&self, args: &CommandArguments) -> std::io::Result<i32> {
+        match args {
+            CommandArguments::PatchOperationArguments(patch_name) => {
+                let patch_manger = PatchManager::new()?;
+                let patch_status = patch_manger.get_patch_status(patch_name).unwrap_or_default();
+                info!("{}", patch_status);
 
-        info!("{}", patch_manager.get_patch_status(&args[0])?);
-
-        debug!("Command \"status {}\" done", args[0]);
-        Ok(0)
+                if patch_status == PatchStatus::Unknown {
+                    return Ok(-1);
+                }
+                Ok(0)
+            },
+            _ => unreachable!(),
+        }
     }
 }

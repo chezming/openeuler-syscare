@@ -1,14 +1,13 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use crate::constants::*;
-
-use crate::patch::PatchInfo;
+use crate::patch::{PatchInfo, PATCH_INFO_FILE_NAME};
 use crate::workdir::PackageBuildRoot;
 use crate::util::{fs, serde};
 use crate::util::os_str::OsStrConcat;
 use crate::util::ext_cmd::ExternCommandArgs;
 
+use super::rpm_helper::{PKG_FILE_EXT, RPM_BUILD};
 use super::rpm_spec_generator::RpmSpecGenerator;
 
 pub struct RpmBuilder {
@@ -43,7 +42,7 @@ impl RpmBuilder {
     }
 
     pub fn generate_spec_file(&self, patch_info: &PatchInfo) -> std::io::Result<PathBuf> {
-        RpmSpecGenerator::generate_from_patch_info(
+        RpmSpecGenerator::generate_spec_file(
             patch_info,
             &self.build_root.sources,
             &self.build_root.specs
@@ -51,63 +50,54 @@ impl RpmBuilder {
     }
 
     pub fn build_prepare<P: AsRef<Path>>(&self, spec_file: P) -> std::io::Result<()> {
-        let exit_status = RPM_BUILD.execvp(
+        RPM_BUILD.execvp(
             ExternCommandArgs::new()
                 .arg("--define")
                 .arg(OsString::from("_topdir ").concat(&self.build_root))
                 .arg("-bp")
                 .arg(spec_file.as_ref())
-        )?;
-
-        let exit_code = exit_status.exit_code();
-        if exit_code != 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                format!("Process \"{}\" exited unsuccessfully, exit_code={}", RPM_BUILD, exit_code),
-            ));
-        }
-
-        Ok(())
+        )?.check_exit_code()
     }
 
-    pub fn build_source_package<P: AsRef<Path>, Q: AsRef<Path>>(&self, spec_file: P, output_dir: Q) -> std::io::Result<()> {
-        let exit_status = RPM_BUILD.execvp(
+    pub fn build_source_package<P, Q>(&self, patch_info: &PatchInfo, spec_file: P, output_dir: Q) -> std::io::Result<()>
+    where
+        P: AsRef<Path>,
+        Q: AsRef<Path>,
+    {
+        RPM_BUILD.execvp(
             ExternCommandArgs::new()
                 .arg("--define")
                 .arg(OsString::from("_topdir ").concat(&self.build_root))
                 .arg("-bs")
                 .arg(spec_file.as_ref())
+        )?.check_exit_code()?;
+
+        let src_pkg_file = fs::find_file_ext(
+            &self.build_root.srpms,
+            PKG_FILE_EXT,
+            false
         )?;
 
-        let exit_code = exit_status.exit_code();
-        if exit_code != 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                format!("Process \"{}\" exited unsuccessfully, exit_code={}", RPM_BUILD, exit_code),
-            ));
-        }
+        let dst_pkg_name = format!("{}-{}.src.{}",
+            patch_info.target.short_name(),
+            patch_info.full_name(),
+            PKG_FILE_EXT
+        );
+        let dst_pkg_file = output_dir.as_ref().join(dst_pkg_name);
 
-        fs::copy_dir_all(&self.build_root.srpms, &output_dir)?;
+        fs::copy(src_pkg_file, dst_pkg_file)?;
 
         Ok(())
     }
 
     pub fn build_binary_package<P: AsRef<Path>, Q: AsRef<Path>>(&self, spec_file: P, output_dir: Q) -> std::io::Result<()> {
-        let exit_status = RPM_BUILD.execvp(
+        RPM_BUILD.execvp(
             ExternCommandArgs::new()
                 .arg("--define")
                 .arg(OsString::from("_topdir ").concat(&self.build_root))
                 .arg("-bb")
                 .arg(spec_file.as_ref())
-        )?;
-
-        let exit_code = exit_status.exit_code();
-        if exit_code != 0 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                format!("Process \"{}\" exited unsuccessfully, exit_code={}", RPM_BUILD, exit_code),
-            ));
-        }
+        )?.check_exit_code()?;
 
         fs::copy_dir_all(&self.build_root.rpms, &output_dir)?;
 

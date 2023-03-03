@@ -106,6 +106,7 @@ impl<'a> KernelPatchAdapter<'a> {
         let status_str = match status {
             PatchStatus::NotApplied | PatchStatus::Deactived => KPATCH_STATUS_DISABLED,
             PatchStatus::Actived => KPATCH_STATUS_ENABLED,
+            _ => unreachable!("Patch status is unknown"),
         };
         trace!("Write file \"{}\": {}", sys_file_path.display(), status_str);
 
@@ -115,7 +116,7 @@ impl<'a> KernelPatchAdapter<'a> {
 
 impl PatchActionAdapter for KernelPatchAdapter<'_> {
     fn check_compatibility(&self) -> std::io::Result<()> {
-        let kernel_version = sys::get_kernel_version()?;
+        let kernel_version = sys::kernel_version();
 
         let current_kernel = OsString::from("kernel-").concat(&kernel_version);
         let patch_target   = self.patch.target.full_name();
