@@ -5,14 +5,14 @@ use crate::log::Logger;
 use crate::util::sys;
 use crate::cmd::*;
 
-const CLI_NAME:    &str = env!("CARGO_PKG_NAME");
-const CLI_AUTHOR:  &str = env!("CARGO_PKG_AUTHORS");
-const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
-const CLI_ABOUT:   &str = env!("CARGO_PKG_DESCRIPTION");
+pub const CLI_NAME:    &str = env!("CARGO_PKG_NAME");
+pub const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+const CLI_ABOUT: &str = env!("CARGO_PKG_DESCRIPTION");
 
 #[derive(Debug)]
 #[derive(Parser)]
-#[command(bin_name=CLI_NAME, author=CLI_AUTHOR, version=CLI_VERSION, about=CLI_ABOUT)]
+#[command(bin_name=CLI_NAME, version=CLI_VERSION, about=CLI_ABOUT)]
 #[command(disable_help_subcommand(true))]
 pub struct SyscareCLI {
     #[command(subcommand)]
@@ -46,22 +46,18 @@ impl SyscareCLI {
                 cmd_arguments = CommandArguments::CommandLineArguments(args.to_owned());
             }
             Command::Info { patch_name } => {
-                Self::check_root_permission()?;
                 cmd_executor  = Box::new(InfoCommandExecutor {}) as Box<dyn CommandExecutor>;
                 cmd_arguments = CommandArguments::PatchOperationArguments(patch_name.to_owned())
             },
             Command::Target { patch_name } => {
-                Self::check_root_permission()?;
                 cmd_executor = Box::new(TargetCommandExecutor {}) as Box<dyn CommandExecutor>;
                 cmd_arguments = CommandArguments::PatchOperationArguments(patch_name.to_owned())
             },
             Command::Status { patch_name } => {
-                Self::check_root_permission()?;
                 cmd_executor  = Box::new(StatusCommandExecutor {}) as Box<dyn CommandExecutor>;
                 cmd_arguments = CommandArguments::PatchOperationArguments(patch_name.to_owned())
             },
             Command::List => {
-                Self::check_root_permission()?;
                 cmd_executor  = Box::new(ListCommandExecutor {}) as Box<dyn CommandExecutor>;
                 cmd_arguments = CommandArguments::None;
             },
@@ -85,6 +81,11 @@ impl SyscareCLI {
                 cmd_executor  = Box::new(DeactiveCommandExecutor {}) as Box<dyn CommandExecutor>;
                 cmd_arguments = CommandArguments::PatchOperationArguments(patch_name.to_owned())
             },
+            Command::Save => {
+                Self::check_root_permission()?;
+                cmd_executor  = Box::new(SaveCommandExecutor {}) as Box<dyn CommandExecutor>;
+                cmd_arguments = CommandArguments::None;
+            },
             Command::Restore => {
                 Self::check_root_permission()?;
                 cmd_executor  = Box::new(RestoreCommandExecutor {}) as Box<dyn CommandExecutor>;
@@ -97,9 +98,9 @@ impl SyscareCLI {
             },
         };
 
-        debug!("Handle Command \"{:?}\"", cmd);
+        debug!("Command {:?}", cmd);
         let exit_code = cmd_executor.invoke(&cmd_arguments)?;
-        debug!("Command \"{:?}\" done", cmd);
+        debug!("Command {:?} done", cmd);
 
         Ok(exit_code)
     }

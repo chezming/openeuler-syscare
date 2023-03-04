@@ -5,10 +5,11 @@ use std::sync::Mutex;
 
 use log::log;
 use lazy_static::*;
+use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 
 use crate::package::PackageInfo;
-use crate::cli::{CliArguments, CLI_VERSION};
+use crate::cli::CliArguments;
 
 use crate::util::{fs, sys, digest};
 use crate::util::os_str::OsStrContains;
@@ -80,6 +81,7 @@ impl std::fmt::Display for PatchFile {
 #[derive(Serialize, Deserialize)]
 #[derive(Clone)]
 pub struct PatchInfo {
+    pub uuid:        String,
     pub name:        String,
     pub version:     u32,
     pub release:     String,
@@ -90,7 +92,6 @@ pub struct PatchInfo {
     pub license:     String,
     pub description: String,
     pub is_patched:  bool,
-    pub builder:     String,
     pub patches:     Vec<PatchFile>,
 }
 
@@ -98,6 +99,7 @@ impl PatchInfo {
     pub fn new(target_pkg_info: PackageInfo, args: &CliArguments) -> std::io::Result<Self> {
         const KERNEL_PKG_NAME: &str = "kernel";
 
+        let uuid        = Uuid::new_v4().to_string();
         let name        = args.patch_name.to_owned();
         let kind        = match target_pkg_info.name == KERNEL_PKG_NAME {
             true  => PatchType::KernelPatch,
@@ -111,16 +113,14 @@ impl PatchInfo {
         let license     = args.target_license.to_owned().unwrap();
         let description = args.patch_description.to_owned();
         let is_patched  = false;
-        let builder     = CLI_VERSION.to_owned();
         let patches     = args.patches.iter().flat_map(|path| PatchFile::new(path)).collect();
 
         Ok(PatchInfo {
-            name, kind,
+            uuid, name, kind,
             version, release, arch,
             target, target_elfs,
             license, description,
-            is_patched, builder,
-            patches
+            is_patched, patches
         })
     }
 
@@ -151,18 +151,17 @@ impl PatchInfo {
     }
 
     pub fn print_log(&self, level: log::Level) {
+        log!(level, "uuid:        {}", self.uuid);
         log!(level, "name:        {}", self.name);
         log!(level, "version:     {}", self.version);
         log!(level, "release:     {}", self.release);
         log!(level, "arch:        {}", self.arch);
         log!(level, "type:        {}", self.kind);
         log!(level, "target:      {}", self.target.short_name());
-        log!(level, "target_elfs: {}", self.target_elfs_str());
+        log!(level, "target_elf:  {}", self.target_elfs_str());
         log!(level, "license:     {}", self.license);
         log!(level, "description: {}", self.description);
-        log!(level, "builder:     {}", self.builder);
-        log!(level, "");
-        log!(level, "patch list:");
+        log!(level, "patch:");
         for patch_file in &self.patches {
             log!(level, "{} {}", patch_file.digest, patch_file.name.to_string_lossy());
         }

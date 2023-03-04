@@ -1,9 +1,9 @@
-use std::collections::VecDeque;
+use std::collections::HashMap;
 use std::path::Path;
 
 use log::{debug, error, warn};
 
-use crate::util::{fs, serde};
+use crate::util::{fs, serde::serde_versioned};
 
 use super::package_info::PackageInfo;
 use super::patch::Patch;
@@ -18,21 +18,21 @@ pub struct PatchManager {
 }
 
 impl PatchManager {
-    fn scan_patch_list<P: AsRef<Path>>(directory: P) -> std::io::Result<Vec<Patch>> {
-        debug!("Scanning patch list");
+    fn scan_patch_dir<P: AsRef<Path>>(directory: P) -> std::io::Result<Vec<Patch>> {
+        debug!("Scanning for patches");
 
         let mut patch_list = Vec::new();
-        for pkg_root in fs::list_all_dirs(directory, false)? {
-            for patch_root in fs::list_all_dirs(&pkg_root, false)? {
-                match Patch::new(&patch_root) {
-                    Ok(patch) => {
-                        debug!("Detected patch \"{}\"", patch);
-                        patch_list.push(patch);
-                    },
-                    Err(e) => {
-                        error!("{}", e);
-                        error!("Cannot read patch info from \"{}\"", patch_root.to_string_lossy());
-                    }
+        for patch_root in fs::list_all_dirs(directory, false)? {
+            match Patch::new(&patch_root) {
+                Ok(patch) => {
+                    debug!("Detected patch {{{}}}", patch);
+                    patch_list.push(patch);
+                },
+                Err(e) => {
+                    error!("Cannot read patch info of \"{}\", {}",
+                        fs::file_name(&patch_root).to_string_lossy(),
+                        e.to_string().to_lowercase()
+                    );
                 }
             }
         }
@@ -42,11 +42,11 @@ impl PatchManager {
 
     fn is_matched_patch<T: AsRef<Patch>>(patch: &T, pattern: &str) -> bool {
         let patch = patch.as_ref();
-        if (pattern != patch.short_name()) && (pattern != patch.full_name()) {
+        if (pattern != patch.short_name()) && (pattern != patch.full_name()) && (pattern != patch.uuid) {
             return false;
         }
 
-        debug!("Matched patch \"{}\"", patch);
+        debug!("Found patch {{{}}} ({})", patch, patch.full_name());
         true
     }
 
@@ -56,23 +56,23 @@ impl PatchManager {
         F: Fn(&R, &str) -> bool,
         R: AsRef<T>,
     {
-        debug!("Matching patch \"{}\"", pattern);
+        debug!("Finding patch by \"{}\"", pattern);
 
-        let mut list = iter.filter(|obj| is_matched(obj, pattern)).collect::<VecDeque<_>>();
+        let mut list = iter.filter(|obj| is_matched(obj, pattern)).collect::<Vec<_>>();
         match list.len().cmp(&1) {
+            std::cmp::Ordering::Equal => {
+                Ok(list.swap_remove(0))
+            },
             std::cmp::Ordering::Less => {
                 Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
                     format!("Cannot find patch \"{}\"", pattern)
                 ))
             },
-            std::cmp::Ordering::Equal => {
-                Ok(list.pop_front().unwrap())
-            },
             std::cmp::Ordering::Greater => {
                 Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    format!("Found multiple patch named \"{}\", please use 'pkg_name/patch_name' instead", pattern)
+                    format!("Found multiple patch named \"{}\", please use uuid instead", pattern)
                 ))
             },
         }
@@ -85,20 +85,12 @@ impl PatchManager {
             patch_name
         )
     }
-
-    fn find_patch_mut(&mut self, patch_name: &str) -> std::io::Result<&mut Patch> {
-        Self::match_patch(
-            self.patch_list.iter_mut(),
-            Self::is_matched_patch,
-            patch_name
-        )
-    }
 }
 
 impl PatchManager {
     pub fn new() -> std::io::Result<Self> {
         Ok(Self {
-            patch_list: Self::scan_patch_list(PATCH_INSTALL_DIR)?
+            patch_list: Self::scan_patch_dir(PATCH_INSTALL_DIR)?
         })
     }
 
@@ -118,40 +110,44 @@ impl PatchManager {
         self.find_patch(patch_name)?.status()
     }
 
-    pub fn apply_patch(&mut self, patch_name: &str) -> std::io::Result<()> {
-        self.find_patch_mut(patch_name)?.apply()
+    pub fn apply_patch(&self, patch_name: &str) -> std::io::Result<()> {
+        self.find_patch(patch_name)?.apply()
     }
 
-    pub fn remove_patch(&mut self, patch_name: &str) -> std::io::Result<()> {
-        self.find_patch_mut(patch_name)?.remove()
+    pub fn remove_patch(&self, patch_name: &str) -> std::io::Result<()> {
+        self.find_patch(patch_name)?.remove()
     }
 
-    pub fn active_patch(&mut self, patch_name: &str) -> std::io::Result<()> {
-        self.find_patch_mut(patch_name)?.active()
+    pub fn active_patch(&self, patch_name: &str) -> std::io::Result<()> {
+        self.find_patch(patch_name)?.active()
     }
 
-    pub fn deactive_patch(&mut self, patch_name: &str) -> std::io::Result<()> {
-        self.find_patch_mut(patch_name)?.deactive()
+    pub fn deactive_patch(&self, patch_name: &str) -> std::io::Result<()> {
+        self.find_patch(patch_name)?.deactive()
     }
 
-    pub fn save_all_patch_status(&mut self) -> std::io::Result<()> {
-        let mut status_list = Vec::with_capacity(self.patch_list.len());
+    pub fn save_all_patch_status(&self) -> std::io::Result<()> {
+        let mut status_map = HashMap::with_capacity(self.patch_list.len());
 
-        for patch in &mut self.patch_list {
-            status_list.push((patch.short_name(), patch.status()?))
+        for patch in &self.patch_list {
+            status_map.insert(&patch.uuid, patch.status()?);
         }
-        serde::serialize(&status_list, PATCH_STATUS_FILE)?;
+
+        debug!("Saving all patch status");
+        serde_versioned::serialize(&status_map, PATCH_STATUS_FILE)?;
 
         Ok(())
     }
 
-    pub fn restore_all_patch_status(&mut self) -> std::io::Result<()> {
-        let saved_patch_status = serde::deserialize::<_, Vec<(String, PatchStatus)>>(PATCH_STATUS_FILE)?;
-        for (patch_name, status) in saved_patch_status {
-            match self.find_patch_mut(&patch_name) {
+    pub fn restore_all_patch_status(&self) -> std::io::Result<()> {
+        debug!("Reading all patch status");
+        let status_map: HashMap<String, PatchStatus> = serde_versioned::deserialize(PATCH_STATUS_FILE)?;
+
+        for (patch_name, status) in status_map {
+            match self.find_patch(&patch_name) {
                 Ok(patch) => {
                     if let Err(_) = patch.restore(status) {
-                        warn!("Patch \"{}\" restore failed", patch);
+                        warn!("Patch {{{}}} restore failed", patch);
                         continue;
                     }
                 },
