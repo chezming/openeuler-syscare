@@ -6,6 +6,8 @@ mod error;
 mod workdir;
 mod output;
 mod tools;
+mod resolve;
+mod note;
 
 pub use build::*;
 pub use compiler::*;
@@ -15,3 +17,5 @@ pub use error::*;
 pub use workdir::*;
 pub use output::*;
 pub use tools::*;
+pub use resolve::*;
+pub use note::*;
