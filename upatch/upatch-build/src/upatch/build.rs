@@ -1,7 +1,8 @@
+use std::ffi::OsString;
 use std::os::unix::prelude::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::collections::HashMap;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::Read;
 use std::process::exit;
 use std::thread;
@@ -10,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use signal_hook::{iterator::Signals, consts::SIGINT};
 
+use crate::elf::check_elf;
 use crate::log::*;
 use crate::tool::*;
 use crate::dwarf::Dwarf;
@@ -18,7 +20,6 @@ use super::Arguments;
 use super::Compiler;
 use super::WorkDir;
 use super::Project;
-use super::OutputConfig;
 use super::Tool;
 use super::Result;
 use super::Error;
@@ -84,16 +85,16 @@ impl UpatchBuild {
         // build source
         info!("Building original {:?}", project_name);
         let project = Project::new(&self.args.debug_source);
-        project.build(CMD_SOURCE_ENTER, self.work_dir.source_dir(), self.work_dir.binary_dir(), self.args.build_source_cmd.clone())?;
+        project.build(CMD_SOURCE_ENTER, self.work_dir.source_dir(), self.args.build_source_cmd.clone())?;
 
         // build patch
         for patch in &self.args.patches {
             info!("Patching file: {}", patch.display());
-            project.patch(patch, self.args.verbose)?;
+            project.patch(patch, Level::Info)?;
         }
 
         info!("Building patched {:?}", project_name);
-        project.build(CMD_PATCHED_ENTER, self.work_dir.patch_dir(), self.work_dir.binary_dir(), self.args.build_patch_cmd.clone())?;
+        project.build(CMD_PATCHED_ENTER, self.work_dir.patch_dir(), self.args.build_patch_cmd.clone())?;
 
         // unhack compiler
         info!("Unhacking compiler");
@@ -181,7 +182,7 @@ impl UpatchBuild {
         Ok(())
     }
 
-    fn build_patch<P, Q, D>(&self, debug_info: P, binary: Q, diff_dir: D, output_config: &mut OutputConfig) -> Result<()>
+    fn build_patch<P, Q, D>(&self, debug_info: P, binary: Q, diff_dir: D) -> Result<()>
     where
         P: AsRef<Path>,
         Q: AsRef<Path>,
@@ -210,33 +211,77 @@ impl UpatchBuild {
         // ld patchs
         self.compiler.linker(&link_args, &output_file)?;
         resolve(&debug_info, &output_file)?;
-        output_config.push(&binary);
         Ok(())
     }
 
     fn build_patches<P: AsRef<Path>>(&self, debug_infoes: &Vec<P>) -> Result<()> {
-        let mut output_config = OutputConfig::new();
-        let binary_files = list_all_files(self.work_dir.binary_dir(), false)?;
-        for debug_info in debug_infoes {
-            let debug_info_name = file_name(debug_info)?;
-            let mut not_found = true;
-            for binary_file in &binary_files {
-                let binary_name = file_name(binary_file)?;
-                if debug_info_name.contains(binary_name.as_bytes()) {
-                    let diff_dir = self.work_dir.output_dir().to_path_buf().join(&binary_name);
-                    fs::create_dir(&diff_dir)?;
-                    self.create_diff(&binary_file, &diff_dir, debug_info)?;
-                    self.build_patch(debug_info, &binary_name, &diff_dir, &mut output_config)?;
-                    not_found = false;
-                    break;
-                }
-            }
-            if not_found {
-                return Err(Error::Build(format!("don't have binary match {}", debug_info.as_ref().display())));
+        match self.args.elf_pathes.is_empty() {
+            true => self.__build_patches(debug_infoes),
+            false => self.__build_patches_elf(debug_infoes),
+        }?;
+        Ok(())
+    }
+
+    fn __build_patches_elf<P: AsRef<Path>>(&self, debug_infoes: &Vec<P>) -> Result<()> {
+        for i in 0..debug_infoes.len() {
+            let binary_path = self.get_binary_elf(&debug_infoes[i], &self.args.elf_pathes[i])?;
+            let binary_name = file_name(&binary_path)?;
+            let diff_dir = self.work_dir.output_dir().to_path_buf().join(&binary_name);
+            fs::create_dir(&diff_dir)?;
+            self.create_diff(&binary_path, &diff_dir, &debug_infoes[i])?;
+            self.build_patch(&debug_infoes[i], &binary_name, &diff_dir)?;
+        }
+        Ok(())
+    }
+
+    fn get_binary_elf<P: AsRef<Path>, B: AsRef<Path>>(&self, debug_info: P, binary_file: B) -> Result<PathBuf> {
+        let mut result = Vec::new();
+        let pathes = glob(binary_file)?;
+        for binary_file in &pathes {
+            if self.check_binary_elf(binary_file)? {
+                result.push(binary_file);
             }
         }
-        output_config.create(self.args.output_dir.as_ref().unwrap())?;
+        match result.len() {
+            0 => Err(Error::Build(format!("no binary match {:?}", debug_info.as_ref()))),
+            1 => Ok(result[0].clone()),
+            _ => Err(Error::Build(format!("{:?} match too many binaries: {:?}", debug_info.as_ref(), pathes))),
+        }
+    }
+
+    fn __build_patches<P: AsRef<Path>>(&self, debug_infoes: &Vec<P>) -> Result<()> {
+        let binary_files = list_all_files(self.args.elf_dir.as_ref().unwrap(), true)?;
+        for debug_info in debug_infoes {
+            let debug_info_name = file_name(debug_info)?;
+            let (binary_name, binary_file) = self.get_binary(&binary_files, debug_info_name)?;
+            let diff_dir = self.work_dir.output_dir().to_path_buf().join(&binary_name);
+            fs::create_dir(&diff_dir)?;
+            self.create_diff(&binary_file, &diff_dir, debug_info)?;
+            self.build_patch(debug_info, &binary_name, &diff_dir)?;
+        }
         Ok(())
+    }
+
+    fn get_binary<P: AsRef<Path>>(&self, binary_files: &Vec<P>, debug_info_name: OsString) -> Result<(OsString, PathBuf)> {
+        let (mut name, mut file) = (OsString::new(), PathBuf::new());
+        for binary_file in binary_files {
+            let binary_name = file_name(binary_file)?;
+            if debug_info_name.contains(binary_name.as_bytes()) && self.check_binary_elf(&binary_file)? {
+                match name.is_empty() {
+                    true => (name, file) = (binary_name, binary_file.as_ref().to_path_buf()),
+                    false => return Err(Error::Build(format!("{:?} match too many binaries: {:?} {:?}, please use --elf-dir or --elf-path parameter to specify one", debug_info_name, file, binary_file.as_ref()))),
+                }
+            }
+        }
+        match name.is_empty() {
+            true => Err(Error::Build(format!("no binary match {:?}", debug_info_name))),
+            false => Ok((name, file)),
+        }
+    }
+
+    fn check_binary_elf<P: AsRef<Path>>(&self, binary_file: P) -> std::io::Result<bool> {
+        let file = OpenOptions::new().read(true).open(binary_file)?;
+        check_elf(&file)
     }
 
     fn unhack_stop(&self) {
