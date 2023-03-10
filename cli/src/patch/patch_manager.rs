@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use log::{debug, error, warn};
+use log::{debug, error};
 
 use crate::util::{fs, serde::serde_versioned};
 
@@ -29,8 +29,8 @@ impl PatchManager {
                     patch_list.push(patch);
                 },
                 Err(e) => {
-                    error!("Cannot read patch info of \"{}\", {}",
-                        fs::file_name(&patch_root).to_string_lossy(),
+                    error!("Cannot read patch info from \"{}\", {}",
+                        patch_root.display(),
                         e.to_string().to_lowercase()
                     );
                 }
@@ -42,7 +42,7 @@ impl PatchManager {
 
     fn is_matched_patch<T: AsRef<Patch>>(patch: &T, pattern: &str) -> bool {
         let patch = patch.as_ref();
-        if (pattern != patch.short_name()) && (pattern != patch.full_name()) && (pattern != patch.uuid) {
+        if (pattern != patch.full_name()) && (pattern != patch.uuid) {
             return false;
         }
 
@@ -78,11 +78,11 @@ impl PatchManager {
         }
     }
 
-    fn find_patch(&self, patch_name: &str) -> std::io::Result<&Patch> {
+    fn find_patch(&self, identifier: &str) -> std::io::Result<&Patch> {
         Self::match_patch(
             self.patch_list.iter(),
             Self::is_matched_patch,
-            patch_name
+            identifier
         )
     }
 }
@@ -98,42 +98,42 @@ impl PatchManager {
         &self.patch_list
     }
 
-    pub fn get_patch_info(&self, patch_name: &str) -> std::io::Result<&PatchInfo> {
-        Ok(&self.find_patch(patch_name)?.info)
+    pub fn get_patch_info(&self, identifier: &str) -> std::io::Result<&PatchInfo> {
+        Ok(&self.find_patch(identifier)?.info)
     }
 
-    pub fn get_patch_target(&self, patch_name: &str) -> std::io::Result<&PackageInfo> {
-        Ok(&self.find_patch(patch_name)?.info.target)
+    pub fn get_patch_target(&self, identifier: &str) -> std::io::Result<&PackageInfo> {
+        Ok(&self.find_patch(identifier)?.info.target)
     }
 
-    pub fn get_patch_status(&self, patch_name: &str) -> std::io::Result<PatchStatus> {
-        self.find_patch(patch_name)?.status()
+    pub fn get_patch_status(&self, identifier: &str) -> std::io::Result<PatchStatus> {
+        self.find_patch(identifier)?.status()
     }
 
-    pub fn apply_patch(&self, patch_name: &str) -> std::io::Result<()> {
-        self.find_patch(patch_name)?.apply()
+    pub fn apply_patch(&self, identifier: &str) -> std::io::Result<()> {
+        self.find_patch(identifier)?.apply()
     }
 
-    pub fn remove_patch(&self, patch_name: &str) -> std::io::Result<()> {
-        self.find_patch(patch_name)?.remove()
+    pub fn remove_patch(&self, identifier: &str) -> std::io::Result<()> {
+        self.find_patch(identifier)?.remove()
     }
 
-    pub fn active_patch(&self, patch_name: &str) -> std::io::Result<()> {
-        self.find_patch(patch_name)?.active()
+    pub fn active_patch(&self, identifier: &str) -> std::io::Result<()> {
+        self.find_patch(identifier)?.active()
     }
 
-    pub fn deactive_patch(&self, patch_name: &str) -> std::io::Result<()> {
-        self.find_patch(patch_name)?.deactive()
+    pub fn deactive_patch(&self, identifier: &str) -> std::io::Result<()> {
+        self.find_patch(identifier)?.deactive()
     }
 
     pub fn save_all_patch_status(&self) -> std::io::Result<()> {
+        debug!("Saving all patch status");
+
         let mut status_map = HashMap::with_capacity(self.patch_list.len());
 
         for patch in &self.patch_list {
             status_map.insert(&patch.uuid, patch.status()?);
         }
-
-        debug!("Saving all patch status");
         serde_versioned::serialize(&status_map, PATCH_STATUS_FILE)?;
 
         Ok(())
@@ -141,13 +141,36 @@ impl PatchManager {
 
     pub fn restore_all_patch_status(&self) -> std::io::Result<()> {
         debug!("Reading all patch status");
-        let status_map: HashMap<String, PatchStatus> = serde_versioned::deserialize(PATCH_STATUS_FILE)?;
+        let mut status_map: HashMap<String, PatchStatus> = serde_versioned::deserialize(PATCH_STATUS_FILE)?;
+        /*
+         * Merge patch status map with current patch list
+         * and treat new patch as NOT-APPLIED
+         */
+        for patch in self.get_patch_list() {
+            if !status_map.contains_key(&patch.uuid) {
+                status_map.insert(patch.uuid.to_owned(), PatchStatus::NotApplied);
+            }
+        }
+        /*
+         * To ensure that we won't load multiple patches for same target at the same time,
+         * we take following measures:
+         * 1. map DEACTIVED status to NOT-APPLIED
+         * 2. sort patch status to make sure we firstly do REMOVE operation
+         */
+        let mut status_list = status_map.into_iter().map(|(uuid, mut status)| {
+            if status == PatchStatus::Deactived {
+                status = PatchStatus::NotApplied;
+            }
+            (uuid, status)
+        }).collect::<Vec<_>>();
+        status_list.sort_by(|(_, lhs), (_, rhs)| lhs.cmp(rhs));
 
-        for (patch_name, status) in status_map {
-            match self.find_patch(&patch_name) {
+        for (uuid, status) in status_list {
+            match self.find_patch(&uuid) {
                 Ok(patch) => {
-                    if let Err(_) = patch.restore(status) {
-                        warn!("Patch {{{}}} restore failed", patch);
+                    if let Err(e) = patch.restore(status) {
+                        error!("{}", e);
+                        error!("Patch {{{}}} restore failed", patch);
                         continue;
                     }
                 },
