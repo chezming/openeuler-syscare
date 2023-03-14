@@ -1,13 +1,13 @@
 use log::info;
 
 use crate::boot::{BootManager, RebootOption};
-use crate::util::fs;
+use common::util::fs;
 
 use super::{CommandExecutor, CommandArguments};
 
-pub struct FastRebootCommandExecutor;
+pub struct RebootCommandExecutor;
 
-impl CommandExecutor for FastRebootCommandExecutor {
+impl CommandExecutor for RebootCommandExecutor {
     fn invoke(&self, args: &CommandArguments) -> std::io::Result<i32> {
         match args {
             CommandArguments::RebootArguments(kernel, force) => {
