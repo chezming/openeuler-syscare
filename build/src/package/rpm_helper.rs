@@ -47,8 +47,7 @@ impl RpmHelper {
             fs::find_dir(
                 directory,
                 PKG_BUILD_ROOT,
-                false,
-                true
+                fs::FindOptions { fuzz: false, recursive: true }
             )?
         ))
     }
@@ -56,10 +55,10 @@ impl RpmHelper {
     pub fn find_spec_file<P: AsRef<Path>>(directory: P) -> std::io::Result<PathBuf> {
         debug!("Finding package spec file from \"{}\"", directory.as_ref().display());
 
-        let spec_file = fs::find_file_ext(
+        let spec_file = fs::find_file_by_ext(
             directory,
             SPEC_FILE_EXT,
-            false
+            fs::FindOptions { fuzz: false, recursive: false }
         )?;
 
         Ok(spec_file)
@@ -77,8 +76,7 @@ impl RpmHelper {
         let find_source_result = fs::find_dir(
             &directory,
             search_name,
-            true,
-            true
+            fs::FindOptions { fuzz: true, recursive: true }
         );
 
         match find_source_result {
@@ -89,8 +87,7 @@ impl RpmHelper {
                 fs::find_dir(
                     &directory,
                     "",
-                    true,
-                    true
+                    fs::FindOptions { fuzz: true, recursive: true }
                 )
             }
         }
@@ -99,10 +96,10 @@ impl RpmHelper {
     pub fn find_debuginfo<P: AsRef<Path>>(directory: P) -> std::io::Result<Vec<PathBuf>> {
         debug!("Finding package debuginfo from \"{}\"", directory.as_ref().display());
 
-        let debuginfo_files = fs::list_all_files_ext(
+        let debuginfo_files = fs::list_files_by_ext(
             &directory,
             DEBUGINFO_FILE_EXT,
-            true,
+            fs::TraverseOptions { recursive: true },
         )?;
 
         Ok(debuginfo_files)
