@@ -7,14 +7,23 @@ use log::log;
 use lazy_static::*;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
+use common::os;
 
 use crate::package::PackageInfo;
 use crate::cli::CliArguments;
 
 use common::util::os_str::OsStrExt;
-use common::util::{fs, sys, digest};
+use common::util::{fs, digest};
 
 const PATCH_VERSION_LENGTH: usize = 8;
+/*
+ * In order to solve PatchInfo binary compatibility issue,
+ * we use this version string to perform compatibility check
+ * before PatchInfo deserialization.
+ * Therefore, whenever the PatchInfo is modified (including PackageInfo),
+ * it should be updated and keep sync with patch management cli.
+ */
+const PATCH_INFO_MAGIC: &str = "5a8e0b7f";
 
 #[derive(Debug)]
 #[derive(Serialize, Deserialize)]
@@ -48,7 +57,7 @@ impl PatchFile {
         let file_name = fs::file_name(&file_path);
 
         let mut file_digests = FILE_DIGESTS.lock().unwrap();
-        let file_digest = &digest::file_digest(file_path.as_path())?[..PATCH_VERSION_LENGTH];
+        let file_digest = &digest::file(file_path.as_path())?[..PATCH_VERSION_LENGTH];
         if !file_digests.insert(file_digest.to_owned()) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -64,7 +73,7 @@ impl PatchFile {
     }
 
     pub fn is_from_source_pkg(&self) -> bool {
-        self.path.as_os_str().contains(sys::process_id().to_string())
+        self.path.as_os_str().contains(os::process::id().to_string())
     }
 }
 
@@ -111,7 +120,7 @@ impl PatchInfo {
         let arch        = args.patch_arch.to_owned();
         let target      = target_pkg_info;
         let target_elfs = HashMap::new();
-        let digest      = digest::file_list_digest(&args.patches)?[..PATCH_VERSION_LENGTH].to_owned();
+        let digest      = digest::file_list(&args.patches)?[..PATCH_VERSION_LENGTH].to_owned();
         let license     = args.target_license.to_owned().unwrap();
         let description = args.patch_description.to_owned();
         let patches     = args.patches.iter().flat_map(|path| PatchFile::new(path)).collect();
@@ -132,6 +141,10 @@ impl PatchInfo {
 
     pub fn full_name(&self) -> String {
         format!("{}-{}-{}.{}", self.name, self.version, self.release, self.arch)
+    }
+
+    pub fn version() -> &'static str {
+        PATCH_INFO_MAGIC
     }
 }
 

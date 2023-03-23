@@ -1,6 +1,6 @@
 use clap::Parser;
 use log::{LevelFilter, debug};
-use common::util::sys;
+use common::os;
 
 use crate::cmd::*;
 
@@ -8,7 +8,7 @@ use super::logger::Logger;
 
 const CLI_NAME:    &str = env!("CARGO_PKG_NAME");
 const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
-const CLI_ABOUT: &str = env!("CARGO_PKG_DESCRIPTION");
+const CLI_ABOUT:   &str = env!("CARGO_PKG_DESCRIPTION");
 
 #[derive(Debug)]
 #[derive(Parser)]
@@ -23,19 +23,6 @@ pub struct SyscareCLI {
 }
 
 impl SyscareCLI {
-    fn check_root_permission() -> std::io::Result<()> {
-        const ROOT_UID: u32 = 0;
-
-        if sys::user_id() != ROOT_UID {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "This command has to be run with superuser privileges (under the root user on most systems)."
-            ));
-        }
-
-        Ok(())
-    }
-
     fn cli_main(cmd: &Command) -> std::io::Result<i32> {
         let cmd_arguments;
         let cmd_executor;
@@ -62,37 +49,30 @@ impl SyscareCLI {
                 cmd_arguments = CommandArguments::None;
             },
             Command::Apply { identifier } => {
-                Self::check_root_permission()?;
                 cmd_executor  = Box::new(ApplyCommandExecutor {}) as Box<dyn CommandExecutor>;
                 cmd_arguments = CommandArguments::PatchOperationArguments(identifier.to_owned())
             },
             Command::Remove { identifier } => {
-                Self::check_root_permission()?;
                 cmd_executor  = Box::new(RemoveCommandExecutor {}) as Box<dyn CommandExecutor>;
                 cmd_arguments = CommandArguments::PatchOperationArguments(identifier.to_owned())
             },
             Command::Active { identifier } => {
-                Self::check_root_permission()?;
                 cmd_executor  = Box::new(ActiveCommandExecutor {}) as Box<dyn CommandExecutor>;
                 cmd_arguments = CommandArguments::PatchOperationArguments(identifier.to_owned())
             },
             Command::Deactive { identifier } => {
-                Self::check_root_permission()?;
                 cmd_executor  = Box::new(DeactiveCommandExecutor {}) as Box<dyn CommandExecutor>;
                 cmd_arguments = CommandArguments::PatchOperationArguments(identifier.to_owned())
             },
             Command::Save => {
-                Self::check_root_permission()?;
                 cmd_executor  = Box::new(SaveCommandExecutor {}) as Box<dyn CommandExecutor>;
                 cmd_arguments = CommandArguments::None;
             },
             Command::Restore => {
-                Self::check_root_permission()?;
                 cmd_executor  = Box::new(RestoreCommandExecutor {}) as Box<dyn CommandExecutor>;
                 cmd_arguments = CommandArguments::None;
             },
             Command::Reboot { target, force } => {
-                Self::check_root_permission()?;
                 cmd_executor  = Box::new(RebootCommandExecutor {}) as Box<dyn CommandExecutor>;
                 cmd_arguments = CommandArguments::RebootArguments(target.to_owned(), force.to_owned());
             },
@@ -111,6 +91,10 @@ impl SyscareCLI {
         CLI_NAME
     }
 
+    pub fn version() -> &'static str {
+        CLI_VERSION
+    }
+
     pub fn run() -> std::io::Result<i32> {
         let cli = Self::parse();
 
@@ -120,5 +104,18 @@ impl SyscareCLI {
         });
 
         Self::cli_main(&cli.cmd)
+    }
+
+    pub fn check_root_permission() -> std::io::Result<()> {
+        const ROOT_UID: u32 = 0;
+
+        if os::user::id() != ROOT_UID {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "This command has to be run with superuser privileges (under the root user on most systems)."
+            ));
+        }
+
+        Ok(())
     }
 }
