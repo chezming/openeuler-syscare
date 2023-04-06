@@ -25,6 +25,7 @@
 #include "common.h"
 #include "patch.h"
 #include "arch/patch-load.h"
+#include "kmod.h"
 
 #define GOT_RELA_NAME ".rela.dyn"
 #define PLT_RELA_NAME ".rela.plt"
@@ -637,6 +638,37 @@ out_got:
         goto out;
     }
 
+    // get symbol address from .dynsym
+    sechdr = &elf_info->sechdrs[elf_info->index.dynsym];
+    sym = (void *)elf_info->hdr + sechdr->sh_offset;
+    for (i = 0; i < sechdr->sh_size / sizeof(Elf64_Sym); i ++) {
+        unsigned long addr;
+        void __user *tmp_addr;
+
+        /* only need the st_value that is not 0 */
+        if (sym[i].st_value == 0)
+            continue;
+
+        sym_name = elf_info->dynstrtab + sym[i].st_name;
+        /* TODO: don't care about its version here */
+        tmp = strchr(sym_name, '@');
+        if (tmp != NULL)
+            *tmp = '\0';
+
+        /* function could also be part of the GOT with the type R_X86_64_GLOB_DAT */
+        if (!streql(sym_name, name))
+            continue;
+
+        tmp_addr = (void *)(elf_info->load_bias + sym[i].st_value);
+        if (copy_from_user((void *)&addr, tmp_addr, sizeof(unsigned long))) {
+            pr_err("copy address failed \n");
+            goto out;
+        }
+        /* used for R_X86_64_REX_GOTPCRELX */
+        elf_addr = addr;
+        pr_debug("found unresolved .got %s at 0x%lx \n", sym_name, elf_addr);
+        goto out;
+    }
 
 out:
     if (!elf_addr) {
@@ -847,10 +879,6 @@ out:
     return ret;
 }
 
-static struct kprobe kp = {
-    .symbol_name = "do_mprotect_pkey"
-};
-
 typedef int (*do_mprotect_pkey_t)(unsigned long start, size_t len, unsigned long prot, int pkey);
 
 static void frob_text(const struct upatch_module_layout *layout, do_mprotect_pkey_t do_mprotect_pkey)
@@ -870,20 +898,7 @@ static void frob_writable_data(const struct upatch_module_layout *layout, do_mpr
 
 static void set_memory_previliage(struct upatch_module *mod)
 {
-    int ret;
-    do_mprotect_pkey_t do_mprotect_pkey;
-
-    ret = register_kprobe(&kp);
-    if (ret) {
-        pr_err("register_kprobe do_mprotect_pkey error %d\n", ret);
-        kp.symbol_name = "do_mprotect_pkey.constprop.0";
-        ret = register_kprobe(&kp);
-        if (ret) {
-            pr_err("register_kprobe do_mprotect_pkey.constprop.0 error %d\n", ret);
-            return;
-        }
-    }
-    do_mprotect_pkey = (do_mprotect_pkey_t) kp.addr;
+    do_mprotect_pkey_t do_mprotect_pkey = (do_mprotect_pkey_t) upatch_kprobes[UPATCH_KPROBE_MPROTECT]->addr;
 
     frob_text(&mod->core_layout, do_mprotect_pkey);
     frob_rodata(&mod->core_layout, do_mprotect_pkey);
@@ -891,8 +906,6 @@ static void set_memory_previliage(struct upatch_module *mod)
     frob_text(&mod->init_layout, do_mprotect_pkey);
     frob_rodata(&mod->init_layout, do_mprotect_pkey);
     frob_writable_data(&mod->init_layout, do_mprotect_pkey);
-
-    unregister_kprobe(&kp);
 }
 
 static int complete_formation(struct upatch_module *mod, struct inode *patch)
