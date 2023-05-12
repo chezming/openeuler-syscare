@@ -12,8 +12,8 @@ impl CommandExecutor for RemoveCommandExecutor {
         SyscareCLI::check_root_permission()?;
         os::signal::block(&[os::signal::SIGINT, os::signal::SIGTERM])?;
 
-        if let CommandArguments::PatchOperationArguments(identifier) = args {
-            PatchManager::new()?.remove_patch(&identifier)?;
+        if let CommandArguments::PatchOperationArguments { identifier } = args {
+            PatchManager::new()?.find_patch(identifier)?.remove()?;
         }
 
         Ok(0)

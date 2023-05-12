@@ -4,9 +4,7 @@ use std::path::Path;
 use log::{debug, error};
 use common::util::{fs, serde::serde_unversioned};
 
-use super::package_info::PackageInfo;
 use super::patch::Patch;
-use super::patch_info::PatchInfo;
 use super::patch_status::PatchStatus;
 
 const PATCH_INSTALL_DIR: &str = "/usr/lib/syscare/patches";
@@ -17,7 +15,7 @@ pub struct PatchManager {
 }
 
 impl PatchManager {
-    fn scan_patch_dir<P: AsRef<Path>>(directory: P) -> std::io::Result<Vec<Patch>> {
+    fn scan_patch<P: AsRef<Path>>(directory: P) -> std::io::Result<Vec<Patch>> {
         debug!("Scanning for patches");
 
         let mut patch_list = Vec::new();
@@ -78,68 +76,42 @@ impl PatchManager {
         }
     }
 
-    fn find_patch(&self, identifier: &str) -> std::io::Result<&Patch> {
+
+}
+
+impl PatchManager {
+    pub fn new() -> std::io::Result<Self> {
+        Ok(Self {
+            patch_list: Self::scan_patch(PATCH_INSTALL_DIR)?
+        })
+    }
+
+    pub fn find_patch(&self, identifier: &str) -> std::io::Result<&Patch> {
         Self::match_patch(
             self.patch_list.iter(),
             Self::is_matched_patch,
             identifier
         )
     }
-}
-
-impl PatchManager {
-    pub fn new() -> std::io::Result<Self> {
-        Ok(Self {
-            patch_list: Self::scan_patch_dir(PATCH_INSTALL_DIR)?
-        })
-    }
 
     pub fn get_patch_list(&self) -> &[Patch] {
         &self.patch_list
     }
 
-    pub fn get_patch_info(&self, identifier: &str) -> std::io::Result<&PatchInfo> {
-        Ok(&self.find_patch(identifier)?.info)
-    }
-
-    pub fn get_patch_target(&self, identifier: &str) -> std::io::Result<&PackageInfo> {
-        Ok(&self.find_patch(identifier)?.info.target)
-    }
-
-    pub fn get_patch_status(&self, identifier: &str) -> std::io::Result<PatchStatus> {
-        self.find_patch(identifier)?.status()
-    }
-
-    pub fn apply_patch(&self, identifier: &str) -> std::io::Result<()> {
-        self.find_patch(identifier)?.apply()
-    }
-
-    pub fn remove_patch(&self, identifier: &str) -> std::io::Result<()> {
-        self.find_patch(identifier)?.remove()
-    }
-
-    pub fn active_patch(&self, identifier: &str) -> std::io::Result<()> {
-        self.find_patch(identifier)?.active()
-    }
-
-    pub fn deactive_patch(&self, identifier: &str) -> std::io::Result<()> {
-        self.find_patch(identifier)?.deactive()
-    }
-
     pub fn save_all_patch_status(&self) -> std::io::Result<()> {
         debug!("Saving all patch status");
-
         let mut status_map = HashMap::with_capacity(self.patch_list.len());
 
-        for patch in &self.patch_list {
-            status_map.insert(&patch.uuid, patch.status()?);
+        for patch in self.get_patch_list() {
+            status_map.insert(patch.uuid.as_str(), patch.status()?);
+            debug!("  - Patch {{{}}} ({})", patch, patch.full_name());
         }
         serde_unversioned::serialize(&status_map, PATCH_STATUS_FILE)?;
 
         Ok(())
     }
 
-    pub fn restore_all_patch_status(&self) -> std::io::Result<()> {
+    pub fn restore_all_patch_status(&self, accepted_only: bool) -> std::io::Result<()> {
         debug!("Reading all patch status");
         let mut status_map: HashMap<String, PatchStatus> = serde_unversioned::deserialize(PATCH_STATUS_FILE)?;
         /*
@@ -157,12 +129,16 @@ impl PatchManager {
          * 1. map DEACTIVED status to NOT-APPLIED
          * 2. sort patch status to make sure we firstly do REMOVE operation
          */
-        let mut status_list = status_map.into_iter().map(|(uuid, mut status)| {
+        let mut status_list = status_map.into_iter().filter_map(|(uuid, mut status)| {
+            if accepted_only && status != PatchStatus::Accepted {
+                return None;
+            }
             if status == PatchStatus::Deactived {
                 status = PatchStatus::NotApplied;
             }
-            (uuid, status)
+            Some((uuid, status))
         }).collect::<Vec<_>>();
+
         status_list.sort_by(|(_, lhs), (_, rhs)| lhs.cmp(rhs));
 
         for (uuid, status) in status_list {
