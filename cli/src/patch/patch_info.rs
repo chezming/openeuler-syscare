@@ -14,7 +14,7 @@ use super::package_info::PackageInfo;
  * Therefore, whenever the PatchInfo is modified (including PackageInfo),
  * this should be updated and keep sync with patch builder.
  */
-const PATCH_INFO_MAGIC: &str = "5a8e0b7f";
+const PATCH_INFO_MAGIC: &str = "2A96A33EC26809077";
 
 #[derive(Debug)]
 #[derive(Serialize, Deserialize)]
@@ -102,5 +102,11 @@ impl PatchInfo {
         for patch_file in &self.patches {
             log!(level, "{} {}", patch_file.digest, patch_file.name.to_string_lossy());
         }
+    }
+}
+
+impl std::fmt::Display for PatchInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.uuid)
     }
 }
