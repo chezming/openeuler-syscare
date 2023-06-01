@@ -19,7 +19,15 @@ impl Tool {
     }
 
     pub fn check(&mut self) -> std::io::Result<()> {
-        self.diff = search_tool(SUPPORT_DIFF)?;
+        let current_exe = std::env::current_exe()?;
+        let search_dir = match current_exe.parent() {
+            Some(search_dir) => search_dir,
+            None => return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("can't get current binary {:?}'s directory", &current_exe)
+            )),
+        };
+        self.diff = search_tool(search_dir.join(SUPPORT_DIFF))?;
         Ok(())
     }
 
@@ -39,7 +47,7 @@ impl Tool {
         if verbose {
             args_list = args_list.arg("-d");
         }
-        let output = ExternCommand::new(&self.diff).execvp(args_list)?;
+        let output = ExternCommand::new(&self.diff).execv(args_list)?;
         if !output.exit_status().success() {
             return Err(Error::Diff(format!("{}: please look {:?} for detail.", output.exit_code(), log_file.as_ref())))
         };

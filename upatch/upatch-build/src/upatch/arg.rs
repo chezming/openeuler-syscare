@@ -1,4 +1,4 @@
-use std::path::{PathBuf, Path};
+use std::path::PathBuf;
 use std::ffi::OsString;
 
 use clap::Parser;
@@ -10,7 +10,7 @@ use crate::tool::*;
 #[command(bin_name="upatch-build", version, term_width = 200)]
 pub struct Arguments {
     /// Specify work directory
-    /// will add .upatch in work_dir [default: ~/.upatch]
+    /// will add upatch in work_dir [default: ~/.upatch]
     #[arg(short, long, default_value = None, verbatim_doc_comment)]
     pub work_dir: Option<PathBuf>,
 
@@ -42,7 +42,7 @@ pub struct Arguments {
 
     /// Specify compiler [default: gcc]
     #[arg(short, long, default_value = None)]
-    pub compiler: Option<PathBuf>,
+    pub compiler: Option<Vec<PathBuf>>,
 
     /// Specify output directory [default: <WORK_DIR>]
     #[arg(short, long)]
@@ -73,30 +73,32 @@ impl Arguments {
 
 impl Arguments {
     pub fn check(&mut self) -> std::io::Result<()> {
-        self.work_dir = match &self.work_dir {
-            Some(work_dir) => Some(real_arg(work_dir)?),
+        self.work_dir = Some(match &self.work_dir {
+            Some(work_dir) => real_arg(work_dir)?.join("upatch"),
             #[allow(deprecated)]
-            None => Some(match std::env::home_dir() {
-                Some(work_dir) => work_dir,
+            None => match std::env::home_dir() {
+                Some(work_dir) => work_dir.join(".upatch"),
                 None => return Err(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
                     format!("home_dir don't support BSD system"),
                 )),
-            }),
-        };
+            },
+        });
 
-        let compiler_path = self.compiler.as_deref().unwrap_or(&Path::new("gcc"));
-        self.compiler = match compiler_path.exists() {
-            true => {
-                Some(real_arg(compiler_path)?)
-            },
-            false => {
-                Some(which(compiler_path).map_err(|e| std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("can't find {:?} in system: {}", compiler_path, e),
-                ))?)
-            },
-        };
+        let mut default_compiler = vec![PathBuf::from("gcc"), PathBuf::from("g++")];
+        let compiler_paths = self.compiler.as_deref_mut().unwrap_or(&mut default_compiler);
+        self.compiler = Some({
+            for compiler_path in &mut compiler_paths.iter_mut() {
+                *compiler_path = match compiler_path.exists() {
+                    true => real_arg(&compiler_path)?,
+                    false => which(&compiler_path).map_err(|e| std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            format!("can't find {:?} in system: {}", compiler_path, e),
+                        ))?,
+                };
+            }
+            compiler_paths.to_vec()
+        });
 
         self.debug_source = real_arg(&self.debug_source)?;
 
