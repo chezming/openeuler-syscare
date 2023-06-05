@@ -30,6 +30,7 @@ impl std::fmt::Display for PatchType {
     }
 }
 
+#[derive(Debug)]
 #[derive(Serialize, Deserialize)]
 #[derive(Clone)]
 pub struct PatchFile {
@@ -38,6 +39,7 @@ pub struct PatchFile {
     pub digest: String,
 }
 
+#[derive(Debug)]
 #[derive(Serialize, Deserialize)]
 #[derive(Clone)]
 pub struct PatchInfo {
@@ -49,7 +51,7 @@ pub struct PatchInfo {
     pub kind:        PatchType,
     pub digest:      String,
     pub target:      PackageInfo,
-    pub target_elfs: HashMap<OsString, PathBuf>,
+    pub target_elfs: HashMap<OsString, PathBuf>, // (elf_name, elf_path)
     pub license:     String,
     pub description: String,
     pub patches:     Vec<PatchFile>,
@@ -74,15 +76,13 @@ impl PatchInfo {
         const PATCH_FLAG_NONE: &str = "(none)";
 
         let target_elfs = match self.target_elfs.is_empty() {
-            false => {
-                let mut str = String::new();
-                for (elf_name, _) in self.target_elfs.iter() {
-                    str.push_str(&format!("{}, ", elf_name.to_string_lossy()));
-                }
-                str.trim_end_matches(", ").to_string()
-            },
             true => {
                 PATCH_FLAG_NONE.to_owned()
+            },
+            false => {
+                self.target_elfs.iter().map(|(elf_name, _)| {
+                    format!("{}, ", elf_name.to_string_lossy())
+                }).collect::<String>().trim_end_matches(", ").to_string()
             },
         };
 
@@ -98,8 +98,10 @@ impl PatchInfo {
         log!(level, "license:     {}", self.license);
         log!(level, "description: {}", self.description);
         log!(level, "patch:");
+        let mut patch_id = 1usize;
         for patch_file in &self.patches {
-            log!(level, "{} {}", patch_file.digest, patch_file.name.to_string_lossy());
+            log!(level, "{}. {}", patch_id, patch_file.name.to_string_lossy());
+            patch_id += 1;
         }
     }
 }
