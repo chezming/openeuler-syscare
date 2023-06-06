@@ -29,6 +29,8 @@
 
 #define GOT_RELA_NAME ".rela.dyn"
 #define PLT_RELA_NAME ".rela.plt"
+#define TDATA_NAME ".tdata"
+#define TBSS_NAME ".tbss"
 
 #ifndef ARCH_SHF_SMALL
 #define ARCH_SHF_SMALL 0
@@ -401,7 +403,7 @@ static int move_module(struct upatch_module *mod, struct upatch_load_info *info)
     /* Do the allocs. */
     ret = upatch_module_alloc(info, &mod->core_layout, 0xffffffff);
     if (ret) {
-        pr_err("alloc upatch module memory failed \n");
+        pr_err("alloc upatch module memory failed: %d \n", ret);
         return ret;
     }
 
@@ -511,23 +513,6 @@ static int find_upatch_module_sections(struct upatch_module *mod, struct upatch_
     return 0;
 }
 
-/* Used for both PLT/GOT */
-static unsigned long setup_jmp_table(struct upatch_load_info *info, unsigned long jmp_addr)
-{
-    struct upatch_jmp_table_entry *table = info->mod->core_layout.kbase + info->jmp_offs;
-    unsigned int index = info->jmp_cur_entry;
-    if (index >= info->jmp_max_entry) {
-        pr_err("jmp table overflow \n");
-        return 0;
-    }
-
-    table[index].inst = jmp_table_inst();
-    table[index].addr = jmp_addr;
-    info->jmp_cur_entry ++;
-    return (unsigned long)(info->mod->core_layout.base + info->jmp_offs +
-                           index * sizeof(struct upatch_jmp_table_entry));
-}
-
 static unsigned long
 resolve_symbol(struct running_elf_info *elf_info, const char *name, Elf_Sym patch_sym)
 {
@@ -586,7 +571,6 @@ out_plt:
         unsigned long r_sym = ELF64_R_SYM (rela[i].r_info);
         /* for executable file, r_offset is virtual address of PLT table */
         void __user *tmp_addr = (void *)(elf_info->load_bias + rela[i].r_offset);
-        unsigned long addr;
 
         /* some rela don't have the symbol index, use the symbol's value and rela's addend to find the symbol.
          * for example, R_X86_64_IRELATIVE.
@@ -604,19 +588,14 @@ out_plt:
             if (tmp != NULL)
                 *tmp = '\0';
 
-            if (!streql(sym_name, name)
-                || ELF64_ST_TYPE(sym[r_sym].st_info) != STT_FUNC)
+            if (!(streql(sym_name, name)
+                && (ELF64_ST_TYPE(sym[r_sym].st_info) == STT_FUNC || ELF64_ST_TYPE(sym[r_sym].st_info) == STT_TLS)))
                 continue;
         }
 
-        /* this address is used for R_X86_64_PLT32  */
-        if (copy_from_user((void *)&addr, tmp_addr, sizeof(unsigned long))) {
-            pr_err("copy address failed \n");
-            goto out;
-        }
-        elf_addr = setup_jmp_table(elf_info->load_info, addr);
-        pr_debug("found unresolved plt.rela %s at 0x%llx -> 0x%lx <- 0x%lx (jmp)\n",
-            sym_name, rela[i].r_offset, addr, elf_addr);
+        elf_addr = insert_plt_table(elf_info->load_info, ELF64_R_TYPE(rela[i].r_info), tmp_addr);
+        pr_debug("found unresolved plt.rela %s at 0x%llx -> 0x%lx\n",
+            sym_name, rela[i].r_offset, elf_addr);
         goto out;
     }
 
@@ -631,24 +610,25 @@ out_got:
         unsigned long r_sym = ELF64_R_SYM (rela[i].r_info);
         /* for executable file, r_offset is virtual address of GOT table */
         void __user *tmp_addr = (void *)(elf_info->load_bias + rela[i].r_offset);
-        unsigned long addr;
 
-        sym_name = elf_info->dynstrtab + sym[r_sym].st_name;
-        /* TODO: don't care about its version here */
-        tmp = strchr(sym_name, '@');
-        if (tmp != NULL)
-            *tmp = '\0';
-
-        /* function could also be part of the GOT with the type R_X86_64_GLOB_DAT */
-        if (!streql(sym_name, name))
-            continue;
-
-        if (copy_from_user((void *)&addr, tmp_addr, sizeof(unsigned long))) {
-            pr_err("copy address failed \n");
-            goto out;
+        if (r_sym == 0) {
+            if (rela[i].r_addend != patch_sym.st_value)
+                continue;
+            sprintf(sym_name, "%llx", rela[i].r_addend);
         }
-        /* used for R_X86_64_REX_GOTPCRELX */
-        elf_addr = addr;
+        else {
+            sym_name = elf_info->dynstrtab + sym[r_sym].st_name;
+            /* TODO: don't care about its version here */
+            tmp = strchr(sym_name, '@');
+            if (tmp != NULL)
+                *tmp = '\0';
+
+            /* function could also be part of the GOT with the type R_X86_64_GLOB_DAT */
+            if (!streql(sym_name, name))
+                continue;
+        }
+
+        elf_addr = insert_got_table(elf_info->load_info, ELF64_R_TYPE(rela[i].r_info), tmp_addr);
         pr_debug("found unresolved .got %s at 0x%lx \n", sym_name, elf_addr);
         goto out;
     }
@@ -657,7 +637,6 @@ out_got:
     sechdr = &elf_info->sechdrs[elf_info->index.dynsym];
     sym = (void *)elf_info->hdr + sechdr->sh_offset;
     for (i = 0; i < sechdr->sh_size / sizeof(Elf64_Sym); i ++) {
-        unsigned long addr;
         void __user *tmp_addr;
 
         /* only need the st_value that is not 0 */
@@ -675,12 +654,7 @@ out_got:
             continue;
 
         tmp_addr = (void *)(elf_info->load_bias + sym[i].st_value);
-        if (copy_from_user((void *)&addr, tmp_addr, sizeof(unsigned long))) {
-            pr_err("copy address failed \n");
-            goto out;
-        }
-        /* used for R_X86_64_REX_GOTPCRELX */
-        elf_addr = addr;
+        elf_addr = insert_got_table(elf_info->load_info, 0, tmp_addr);
         pr_debug("found unresolved .got %s at 0x%lx \n", sym_name, elf_addr);
         goto out;
     }
@@ -835,8 +809,10 @@ int load_binary_syms(struct file *binary_file, struct running_elf_info *elf_info
     }
 
     elf_info->sechdrs = (void *)elf_info->hdr + elf_info->hdr->e_shoff;
+    elf_info->prohdrs = (void *)elf_info->hdr + elf_info->hdr->e_phoff;
     elf_info->secstrings = (void *)elf_info->hdr
         + elf_info->sechdrs[elf_info->hdr->e_shstrndx].sh_offset;
+    elf_info->tls_size = 0;
 
     /* check section header */
     for (i = 1; i < elf_info->hdr->e_shnum; i++) {
@@ -861,6 +837,14 @@ int load_binary_syms(struct file *binary_file, struct running_elf_info *elf_info
             && elf_info->sechdrs[i].sh_type == SHT_RELA) {
             elf_info->index.reladyn = i;
             pr_debug("found %s with %d \n", GOT_RELA_NAME, i);
+        }
+    }
+
+    for (i = 0; i < elf_info->hdr->e_phnum; i++) {
+        if (elf_info->prohdrs[i].p_type == PT_TLS) {
+            elf_info ->tls_size = elf_info->prohdrs[i].p_memsz;
+            elf_info ->tls_align = elf_info->prohdrs[i].p_align;
+            break;
         }
     }
 

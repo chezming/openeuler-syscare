@@ -11,20 +11,31 @@
 
 #include "arch/patch-load.h"
 
+#ifndef R_X86_64_DTPMOD64
+#define R_X86_64_DTPMOD64       16
+#endif
+
+#ifndef R_X86_64_TLSGD
+#define R_X86_64_TLSGD          19
+#endif
+
+#ifndef R_X86_64_GOTTPOFF
+#define R_X86_64_GOTTPOFF       22
+#endif
+
+#ifndef R_X86_64_TPOFF32
+#define R_X86_64_TPOFF32        23
+#endif
+
 #ifndef R_X86_64_GOTPCRELX
-#define R_X86_64_GOTPCRELX 41
+#define R_X86_64_GOTPCRELX      41
 #endif
 
 #ifndef R_X86_64_REX_GOTPCRELX
-#define R_X86_64_REX_GOTPCRELX 42
+#define R_X86_64_REX_GOTPCRELX  42
 #endif
 
 #define X86_64_JUMP_TABLE_JMP 0x90900000000225ff /* jmp [rip+2]; nop; nop */
-
-unsigned long jmp_table_inst()
-{
-    return X86_64_JUMP_TABLE_JMP;
-}
 
 void setup_parameters(struct pt_regs *regs, unsigned long para_a,
     unsigned long para_b, unsigned long para_c)
@@ -34,13 +45,29 @@ void setup_parameters(struct pt_regs *regs, unsigned long para_a,
     regs->dx = para_c;
 }
 
+static unsigned long setup_jmp_table(struct upatch_load_info *info, unsigned long jmp_addr)
+{
+    struct upatch_jmp_table_entry *table = info->mod->core_layout.kbase + info->jmp_offs;
+    unsigned int index = info->jmp_cur_entry;
+    if (index >= info->jmp_max_entry) {
+        pr_err("jmp table overflow \n");
+        return 0;
+    }
+
+    table[index].inst = X86_64_JUMP_TABLE_JMP;
+    table[index].addr = jmp_addr;
+    info->jmp_cur_entry ++;
+    return (unsigned long)(info->mod->core_layout.base + info->jmp_offs +
+                           index * sizeof(struct upatch_jmp_table_entry));
+}
+
 /*
  * Jmp tabale records address and used call instruction to execute it.
  * So, we need 'Inst' and 'addr'
  * GOT only need record address and resolve it by [got_addr].
  * To simplify design, use same table for both jmp table and GOT.
  */
-static unsigned long setup_got_table(struct upatch_load_info *info, unsigned long jmp_addr)
+static unsigned long setup_got_table(struct upatch_load_info *info, unsigned long jmp_addr, unsigned long tls_addr)
 {
     struct upatch_jmp_table_entry *table =
         info->mod->core_layout.kbase + info->jmp_offs;
@@ -51,10 +78,55 @@ static unsigned long setup_got_table(struct upatch_load_info *info, unsigned lon
     }
 
     table[index].inst = jmp_addr;
-    table[index].addr = 0xffffffff;
+    table[index].addr = tls_addr;
     info->jmp_cur_entry ++;
     return (unsigned long)(info->mod->core_layout.base + info->jmp_offs
         + index * sizeof(struct upatch_jmp_table_entry));
+}
+
+unsigned long insert_plt_table(struct upatch_load_info *info, unsigned long r_type, void __user *addr)
+{
+    unsigned long jmp_addr;
+    unsigned long elf_addr = 0;
+
+    if (copy_from_user((void *)&jmp_addr, addr, sizeof(unsigned long))) {
+        pr_err("copy address failed \n");
+        goto out;
+    }
+
+    elf_addr = setup_jmp_table(info, jmp_addr);
+
+    pr_debug("0x%lx: jmp_addr=0x%lx \n", elf_addr, jmp_addr);
+
+out:
+    return elf_addr;
+}
+
+
+unsigned long insert_got_table(struct upatch_load_info *info, unsigned long r_type, void __user *addr)
+{
+    unsigned long jmp_addr;
+    unsigned long tls_addr = 0xffffffff;
+    unsigned long elf_addr = 0;
+
+    if (copy_from_user((void *)&jmp_addr, addr, sizeof(unsigned long))) {
+        pr_err("copy address failed \n");
+        goto out;
+    }
+
+    // tls's got size is 64bits
+    if (r_type == R_X86_64_DTPMOD64 &&
+        copy_from_user((void *)&tls_addr, addr + 8, sizeof(unsigned long))) {
+        pr_err("copy address failed \n");
+        goto out;
+    }
+
+    elf_addr = setup_got_table(info, jmp_addr, tls_addr);
+
+    pr_debug("0x%lx: jmp_addr=0x%lx \n", elf_addr, jmp_addr);
+
+out:
+    return elf_addr;
 }
 
 int apply_relocate_add(struct upatch_load_info *info, Elf64_Shdr *sechdrs,
@@ -65,8 +137,9 @@ int apply_relocate_add(struct upatch_load_info *info, Elf64_Shdr *sechdrs,
     Elf64_Rela *rel = (void *)sechdrs[relsec].sh_addr;
     Elf64_Sym *sym;
     void *loc, *real_loc;
-    u64 val, got;
+    u64 val;
     const char *name;
+    Elf64_Xword tls_size;
 
     pr_debug("Applying relocate section %u to %u\n",
              relsec, sechdrs[relsec].sh_info);
@@ -114,14 +187,14 @@ int apply_relocate_add(struct upatch_load_info *info, Elf64_Shdr *sechdrs,
                 && (ELF_ST_TYPE(sym->st_info) != STT_SECTION))
                 goto overflow;
             break;
+        case R_X86_64_TLSGD:
+        case R_X86_64_GOTTPOFF:
         case R_X86_64_GOTPCRELX:
         case R_X86_64_REX_GOTPCRELX:
-            /* get GOT address */
-            got = setup_got_table(info, sym->st_value);
-            if (got == 0)
+            if (sym->st_value == 0)
                 goto overflow;
             /* G + GOT + A*/
-            val = got + rel[i].r_addend;
+            val = sym->st_value + rel[i].r_addend;
             fallthrough;
         case R_X86_64_PC32:
         case R_X86_64_PLT32:
@@ -135,6 +208,14 @@ int apply_relocate_add(struct upatch_load_info *info, Elf64_Shdr *sechdrs,
                 goto invalid_relocation;
             val -= (u64)real_loc;
             memcpy(loc, &val, 8);
+            break;
+        case R_X86_64_TPOFF32:
+            tls_size = ALIGN(info->running_elf.tls_size, info->running_elf.tls_align);
+            // %fs + val - tls_size
+            if (val >= tls_size)
+                goto overflow;
+            val -= (u64)tls_size;
+            memcpy(loc, &val, 4);
             break;
         default:
             pr_err("Unknown rela relocation: %llu\n", ELF64_R_TYPE(rel[i].r_info));
