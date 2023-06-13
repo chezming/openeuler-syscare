@@ -2,14 +2,14 @@ use std::ffi::OsStr;
 
 use common::os;
 use common::util::fs::TraverseOptions;
-use common::util::{fs, serde::serde_versioned};
+use common::util::{fs, serde};
 use log::LevelFilter;
 use log::{debug, error, info, warn};
 
 use crate::package::{PackageInfo, PackageType, DEBUGINFO_FILE_EXT, PKG_FILE_EXT};
 use crate::package::{RpmBuilder, RpmHelper};
 use crate::patch::{PatchBuilderFactory, PatchHelper};
-use crate::patch::{PatchInfo, PATCH_FILE_EXT, PATCH_INFO_FILE_NAME};
+use crate::patch::{PatchInfo, PATCH_FILE_EXT, PATCH_INFO_FILE_NAME, PATCH_INFO_MAGIC};
 
 use super::args::CliArguments;
 use super::logger::Logger;
@@ -18,6 +18,7 @@ use super::workdir::CliWorkDir;
 const CLI_NAME: &str = "syscare build";
 const CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CLI_ABOUT: &str = env!("CARGO_PKG_DESCRIPTION");
+const CLI_UMASK: u32 = 0o022;
 
 pub struct PatchBuildCLI {
     workdir: CliWorkDir,
@@ -146,7 +147,7 @@ impl PatchBuildCLI {
 
         // Collect patch info from metadata directory
         let patch_info_file = pkg_metadata_dir.join(PATCH_INFO_FILE_NAME);
-        match serde_versioned::deserialize::<_, PatchInfo>(patch_info_file, PatchInfo::version()) {
+        match serde::deserialize_with_magic::<PatchInfo, _, _>(patch_info_file, PATCH_INFO_MAGIC) {
             Ok(patch_info) => {
                 debug!("Found patch metadata, overrides build parameters");
                 // Override path release
@@ -264,7 +265,7 @@ impl PatchBuildCLI {
 
         // Write patch info into patch package source directory
         debug!("Writing patch info to {:?}", patch_info_file);
-        serde_versioned::serialize(patch_info, patch_info_file, PatchInfo::version())?;
+        serde::serialize_with_magic(patch_info, patch_info_file, PATCH_INFO_MAGIC)?;
 
         Ok(())
     }
@@ -342,6 +343,7 @@ impl PatchBuildCLI {
 
 impl PatchBuildCLI {
     fn initialize(&mut self) -> std::io::Result<()> {
+        os::umask::set_umask(CLI_UMASK);
         self.canonicalize_input_args()?;
         self.workdir.create(&self.args.workdir)?;
 
