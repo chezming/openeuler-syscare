@@ -6,6 +6,11 @@ use which::which;
 
 use crate::tool::*;
 
+const CC_NAME: &str = "cc";
+const CXX_NAME: &str = "c++";
+const GCC_NAME: &str = "gcc";
+const GXX_NAME: &str = "g++";
+
 #[derive(Parser, Debug)]
 #[command(bin_name = "upatch-build", version, term_width = 200)]
 pub struct Arguments {
@@ -74,7 +79,15 @@ impl Arguments {
 impl Arguments {
     pub fn check(&mut self) -> std::io::Result<()> {
         self.work_dir = Some(match &self.work_dir {
-            Some(work_dir) => real_arg(work_dir)?.join("upatch"),
+            Some(work_dir) => {
+                if !work_dir.is_dir() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("work_dir {} should be a directory", work_dir.display()),
+                    ));
+                }
+                real_arg(work_dir)?.join("upatch")
+            }
             #[allow(deprecated)]
             None => match std::env::home_dir() {
                 Some(work_dir) => work_dir.join(".upatch"),
@@ -87,14 +100,19 @@ impl Arguments {
             },
         });
 
-        let mut default_compiler = vec![PathBuf::from("gcc"), PathBuf::from("g++")];
+        let mut default_compiler = vec![
+            PathBuf::from(GCC_NAME),
+            PathBuf::from(GXX_NAME),
+            PathBuf::from(CC_NAME),
+            PathBuf::from(CXX_NAME),
+        ];
         let compiler_paths = self
             .compiler
             .as_deref_mut()
             .unwrap_or(&mut default_compiler);
         self.compiler = Some({
             for compiler_path in &mut compiler_paths.iter_mut() {
-                *compiler_path = match compiler_path.exists() {
+                *compiler_path = match compiler_path.is_file() {
                     true => real_arg(&compiler_path)?,
                     false => which(&compiler_path).map_err(|e| {
                         std::io::Error::new(
@@ -107,13 +125,34 @@ impl Arguments {
             compiler_paths.to_vec()
         });
 
+        if !self.debug_source.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "debug_source {} should be a directory",
+                    self.debug_source.display()
+                ),
+            ));
+        }
         self.debug_source = real_arg(&self.debug_source)?;
 
         for debug_info in &mut self.debug_infoes {
+            if !debug_info.is_file() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("debug_info {} should be a file", debug_info.display()),
+                ));
+            }
             *debug_info = real_arg(&debug_info)?;
         }
 
         for patch in &mut self.patches {
+            if !patch.is_file() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("patch {} should be a file", patch.display()),
+                ));
+            }
             *patch = real_arg(&patch)?;
         }
 
@@ -126,7 +165,15 @@ impl Arguments {
         }
 
         self.elf_dir = match &self.elf_dir {
-            Some(elf_dir) => Some(real_arg(elf_dir)?),
+            Some(elf_dir) => Some({
+                if !elf_dir.is_dir() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("elf_dir {} should be a directory", elf_dir.display()),
+                    ));
+                }
+                real_arg(elf_dir)?
+            }),
             None => Some(self.debug_source.clone()),
         };
 
@@ -145,6 +192,15 @@ impl Arguments {
                         self.debug_infoes.len()
                     ),
                 ))
+            }
+        }
+
+        if let Some(output_dir) = &self.output_dir {
+            if !output_dir.is_dir() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("output_dir {} should be a directory", output_dir.display()),
+                ));
             }
         }
 
