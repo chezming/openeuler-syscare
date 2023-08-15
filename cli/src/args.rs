@@ -1,9 +1,31 @@
-use clap::Subcommand;
+use std::path::PathBuf;
 
-#[derive(Debug, Subcommand)]
-pub enum Command {
+use clap::{Parser, Subcommand};
+
+use super::{CLI_NAME, CLI_VERSION};
+
+const DEFAULT_SOCKET_FILE: &str = "/var/run/syscare.sock";
+
+#[derive(Parser, Debug)]
+#[clap(bin_name=CLI_NAME, version=CLI_VERSION)]
+pub struct CliArguments {
+    /// Command name
+    #[clap(subcommand)]
+    pub command: CliCommand,
+
+    /// Path for daemon unix socket
+    #[clap(long, default_value=DEFAULT_SOCKET_FILE)]
+    pub socket_file: PathBuf,
+
+    /// Provide more detailed info
+    #[clap(short, long)]
+    pub verbose: bool,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum CliCommand {
     /// Build a new patch
-    #[command(
+    #[clap(
         disable_help_flag(true),
         subcommand_precedence_over_arg(true),
         allow_hyphen_values(true)
@@ -56,34 +78,22 @@ pub enum Command {
     /// Restore all patch status
     Restore {
         /// Only restore ACCEPTED patches
-        #[arg(long, default_value = "false")]
+        #[clap(long)]
         accepted: bool,
     },
     /// Reboot the system
     Reboot {
         /// Target kernel name
-        #[arg(short, long)]
+        #[clap(short, long)]
         target: Option<String>,
-        #[arg(short, long, default_value = "false")]
+        #[clap(short, long)]
         /// Skip all checks, force reboot
         force: bool,
     },
 }
 
-pub enum CommandArguments {
-    None,
-    CommandLineArguments { args: Vec<String> },
-    PatchOperationArguments { identifier: String },
-    PatchRestoreArguments { accepted_only: bool },
-    RebootArguments { target: Option<String>, force: bool },
-}
-
-impl std::fmt::Display for Command {
+impl std::fmt::Display for CliArguments {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("{:?}", self))
     }
-}
-
-pub trait CommandExecutor {
-    fn invoke(&self, args: &CommandArguments) -> std::io::Result<i32>;
 }
