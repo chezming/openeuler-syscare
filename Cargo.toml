@@ -1,7 +1,9 @@
 [workspace]
 members = [
+    "abi",
     "common",
     "builder",
     "cli",
+    "daemon",
     "upatch/upatch-build"
 ]
