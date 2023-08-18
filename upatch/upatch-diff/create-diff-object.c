@@ -56,8 +56,11 @@
 #include "elf-resolve.h"
 #include "elf-create.h"
 #include "running-elf.h"
-#include "upatch-manage.h"
 #include "upatch-patch.h"
+
+#ifndef UPATCH_VERSION
+#define UPATCH_VERSION "dev"
+#endif
 
 enum loglevel loglevel = NORMAL;
 char *logprefix;

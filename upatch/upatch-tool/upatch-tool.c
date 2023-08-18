@@ -20,8 +20,11 @@
 
 #include <sys/ioctl.h>
 
-#include "upatch-manage.h"
 #include "upatch-ioctl.h"
+
+#ifndef UPATCH_VERSION
+#define UPATCH_VERSION "dev"
+#endif
 
 #define COMMAND_SIZE 8
 char* command[COMMAND_SIZE] =
