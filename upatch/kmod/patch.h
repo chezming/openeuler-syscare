@@ -10,6 +10,7 @@
 #ifndef _UPATCH_PATCH_H
 #define _UPATCH_PATCH_H
 
+#include <linux/mutex.h>
 #include <linux/elf.h>
 
 #include <asm/module.h>

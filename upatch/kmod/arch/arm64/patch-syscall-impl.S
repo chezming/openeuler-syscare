@@ -12,14 +12,14 @@
 
 .text
 
-SYM_CODE_START(__execve_syscall)
+ENTRY(__execve_syscall)
     mov     x8, __NR_execve
     svc     #0
     mov     x8, __NR_exit
     svc     #0
-SYM_CODE_END(__execve_syscall)
+ENDPROC(__execve_syscall)
 
-SYM_CODE_START(__exit_syscall)
+ENTRY(__exit_syscall)
     mov     x8, __NR_exit
     svc     #0
-SYM_CODE_END(__exit_syscall)
+ENDPROC(__exit_syscall)
