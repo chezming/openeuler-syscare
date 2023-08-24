@@ -19,25 +19,18 @@ impl RpcRemote {
         }
     }
 
-    pub fn call<T>(&self, cmd: &str) -> Result<T>
-    where
-        T: for<'a> Deserialize<'a>,
-    {
-        self.call_with_args::<T>(cmd, RpcArguments::default())
-    }
-
     pub fn call_with_args<T>(&self, cmd: &str, args: RpcArguments) -> Result<T>
     where
         T: for<'a> Deserialize<'a>,
     {
         let request = self.client.build_request(cmd, &args);
-        debug!("{:#?}", request);
+        debug!("{:?}", request);
 
         let response = self
             .client
             .send_request(request)
             .map_err(|e| self.parse_error(e))?;
-        debug!("{:#?}", response);
+        debug!("{:?}", response);
 
         response.result().map_err(|e| self.parse_error(e))
     }
