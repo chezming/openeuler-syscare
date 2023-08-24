@@ -1,21 +1,24 @@
+use std::{fs, process};
+
 use anyhow::{ensure, Context, Result};
+use config::Config;
 use daemonize::Daemonize;
 use jsonrpc_core::IoHandler;
 use jsonrpc_ipc_server::{Server, ServerBuilder};
 use log::{error, info};
 
-use syscare_common::{os, util::fs};
+use syscare_common::os;
 
 mod args;
+mod config;
+mod ffi;
+mod hijacker;
 mod logger;
+mod rpc;
 
-use args::*;
-use logger::*;
-
-use crate::{
-    fast_reboot::{FastRebootSkeleton, FastRebootSkeletonImpl},
-    patch::{PatchSkeleton, PatchSkeletonImpl},
-};
+use args::Arguments;
+use logger::Logger;
+use rpc::{Skeleton, SkeletonImpl};
 
 const DAEMON_NAME: &str = env!("CARGO_PKG_NAME");
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -27,7 +30,7 @@ struct Daemon {
 }
 
 impl Daemon {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             uid: os::user::id(),
             args: Arguments::new(),
@@ -45,19 +48,8 @@ impl Daemon {
         Ok(())
     }
 
-    fn initialize_logger(&self) -> Result<()> {
-        Logger::initialize(&self.args.log_dir, self.args.log_level)?;
-
-        if !self.args.daemon {
-            Logger::duplicate_to_stdout()?;
-        }
-
-        Ok(())
-    }
-
     fn prepare_environment(&self) {
         fs::create_dir_all(&self.args.work_dir).ok();
-        fs::create_dir_all(&self.args.data_dir).ok();
         fs::create_dir_all(&self.args.log_dir).ok();
         fs::remove_file(&self.args.socket_file).ok();
         fs::remove_file(&self.args.pid_file).ok();
@@ -77,12 +69,42 @@ impl Daemon {
             .context("Daemonize failed")
     }
 
-    fn initialize_skeletons(&self) -> Result<IoHandler> {
+    fn initialize_logger(&self) -> Result<()> {
+        let max_level = self.args.log_level;
+        let duplicate_stdout = !self.args.daemon;
+        Logger::initialize(&self.args.log_dir, max_level, duplicate_stdout)?;
+
+        Ok(())
+    }
+
+    fn initialize_config(&self) -> Result<Config> {
+        let config_path = &self.args.config_file;
+        let config = match config_path.exists() {
+            true => {
+                let config = Config::parse_from(config_path)?;
+                info!("Using configuration: {:#?}", config);
+
+                config
+            }
+            false => {
+                let config = Config::default();
+                info!("Using default configuration: {:#?}", config);
+                config
+                    .write_to(&self.args.config_file)
+                    .context("Failed to create config file")?;
+
+                config
+            }
+        };
+
+        Ok(config)
+    }
+
+    fn initialize_skeleton(&self, config: Config) -> Result<IoHandler> {
         let mut io_handler = IoHandler::new();
 
-        PatchSkeletonImpl::initialize(&self.args.data_dir)?;
-        io_handler.extend_with(PatchSkeletonImpl.to_delegate());
-        io_handler.extend_with(FastRebootSkeletonImpl.to_delegate());
+        let skeleton_impl = SkeletonImpl::new(config.elf_map)?;
+        io_handler.extend_with(skeleton_impl.to_delegate());
 
         Ok(io_handler)
     }
@@ -104,21 +126,28 @@ impl Daemon {
         Ok(server)
     }
 
-    fn start_and_run(self) -> Result<()> {
+    fn start_and_run(&self) -> Result<()> {
         self.check_root_permission()?;
         self.initialize_logger()?;
 
         info!("============================");
-        info!("Syscare Daemon - v{}", DAEMON_VERSION);
+        info!("Syscare Builder Daemon - v{}", DAEMON_VERSION);
         info!("============================");
-        info!("Start with {:#?}", self.args);
-
         info!("Preparing environment...");
         self.prepare_environment();
+
+        info!("Start with {:#?}", self.args);
         self.daemonize()?;
 
-        info!("Initializing skeletons...");
-        let io_handler = self.initialize_skeletons()?;
+        info!("Initializing configuration...");
+        let config = self
+            .initialize_config()
+            .context("Failed to initialize configuration")?;
+
+        info!("Initializing skeleton...");
+        let io_handler = self
+            .initialize_skeleton(config)
+            .context("Failed to initialize skeleton")?;
 
         info!("Starting remote procedure call server...");
         let server = self
@@ -133,8 +162,8 @@ impl Daemon {
     }
 }
 
-pub fn run() -> i32 {
-    match Daemon::new().start_and_run() {
+pub fn main() {
+    let exit_code = match Daemon::new().start_and_run() {
         Ok(_) => 0,
         Err(e) => {
             match Logger::is_inited() {
@@ -142,11 +171,12 @@ pub fn run() -> i32 {
                     eprintln!("Error: {:?}", e)
                 }
                 true => {
-                    error!("{:#}", e);
+                    error!("{:?}", e);
                     error!("Process exited unsuccessfully");
                 }
             }
             -1
         }
-    }
+    };
+    process::exit(exit_code);
 }
