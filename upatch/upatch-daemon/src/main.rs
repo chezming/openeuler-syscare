@@ -3,8 +3,9 @@ use std::{fs, process};
 use anyhow::{ensure, Context, Result};
 use config::Config;
 use daemonize::Daemonize;
+use hijacker::Hijacker;
 use jsonrpc_core::IoHandler;
-use jsonrpc_ipc_server::{Server, ServerBuilder};
+use jsonrpc_ipc_server::{SecurityAttributes, Server, ServerBuilder};
 use log::{error, info};
 
 use syscare_common::os;
@@ -80,18 +81,11 @@ impl Daemon {
     fn initialize_config(&self) -> Result<Config> {
         let config_path = &self.args.config_file;
         let config = match config_path.exists() {
-            true => {
-                let config = Config::parse_from(config_path)?;
-                info!("Using configuration: {:#?}", config);
-
-                config
-            }
+            true => Config::parse_from(config_path)?,
             false => {
+                info!("Generating default configuration...");
                 let config = Config::default();
-                info!("Using default configuration: {:#?}", config);
-                config
-                    .write_to(&self.args.config_file)
-                    .context("Failed to create config file")?;
+                config.write_to(config_path)?;
 
                 config
             }
@@ -100,24 +94,24 @@ impl Daemon {
         Ok(config)
     }
 
-    fn initialize_skeleton(&self, config: Config) -> Result<IoHandler> {
-        let mut io_handler = IoHandler::new();
+    fn initialize_hijacker(&self, config: Config) -> Result<Hijacker> {
+        // TODO: initialize kernel module or epbf program
+        info!("Using configuration: {:#?}", config);
+        Hijacker::new(config.elf_map)
+    }
 
-        let skeleton_impl = SkeletonImpl::new(config.elf_map)?;
-        io_handler.extend_with(skeleton_impl.to_delegate());
+    fn initialize_skeleton(&self, hijacker: Hijacker) -> Result<IoHandler> {
+        let mut io_handler = IoHandler::new();
+        io_handler.extend_with(SkeletonImpl::new(hijacker)?.to_delegate());
 
         Ok(io_handler)
     }
 
     fn start_rpc_server(&self, io_handler: IoHandler) -> Result<Server> {
         let socket_file = self.args.socket_file.as_path();
-        if socket_file.exists() {
-            std::fs::remove_file(socket_file).ok();
-        }
-
         let builder = ServerBuilder::new(io_handler).set_client_buffer_size(1);
-
-        let server = builder.start(
+        let security_attr = SecurityAttributes::empty().allow_everyone_connect()?;
+        let server = builder.set_security_attributes(security_attr).start(
             socket_file
                 .to_str()
                 .context("Failed to convert socket path to string")?,
@@ -144,9 +138,14 @@ impl Daemon {
             .initialize_config()
             .context("Failed to initialize configuration")?;
 
+        info!("Initializing hijacker...");
+        let hijacker = self
+            .initialize_hijacker(config)
+            .context("Failed to initialize hijacker")?;
+
         info!("Initializing skeleton...");
         let io_handler = self
-            .initialize_skeleton(config)
+            .initialize_skeleton(hijacker)
             .context("Failed to initialize skeleton")?;
 
         info!("Starting remote procedure call server...");
