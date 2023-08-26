@@ -73,11 +73,10 @@ fn main() {
                     eprintln!("Error: {:?}", e)
                 }
                 true => {
-                    error!("{:#}", e);
-                    error!("Process exited unsuccessfully");
+                    error!("Error: {:#}", e);
                 }
             }
-            -1
+            1
         }
     };
     exit(exit_code);
