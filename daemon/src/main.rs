@@ -62,8 +62,6 @@ impl Daemon {
         fs::create_dir_all(&self.args.work_dir).ok();
         fs::create_dir_all(&self.args.data_dir).ok();
         fs::create_dir_all(&self.args.log_dir).ok();
-        fs::remove_file(&self.args.socket_file).ok();
-        fs::remove_file(&self.args.pid_file).ok();
     }
 
     fn daemonize(&self) -> Result<()> {
@@ -73,7 +71,6 @@ impl Daemon {
 
         Daemonize::new()
             .pid_file(&self.args.pid_file)
-            .chown_pid_file(true)
             .working_directory(&self.args.work_dir)
             .umask(DAEMON_UMASK)
             .start()
@@ -133,14 +130,16 @@ impl Daemon {
         info!("Daemon is running...");
         server.wait();
 
-        info!("Daemon exited");
         Ok(())
     }
 }
 
 pub fn main() {
     let exit_code = match Daemon::new().start_and_run() {
-        Ok(_) => 0,
+        Ok(_) => {
+            info!("Daemon exited");
+            0
+        }
         Err(e) => {
             match Logger::is_inited() {
                 false => {
@@ -148,7 +147,7 @@ pub fn main() {
                 }
                 true => {
                     error!("{:#}", e);
-                    error!("Process exited unsuccessfully");
+                    error!("Daemon exited unsuccessfully");
                 }
             }
             -1
