@@ -8,7 +8,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use log::{debug, error};
 
-const KMOD_NAME: &str = "upatch_hijacker";
+const KMOD_NAME: &str = "upatch";
 const KMOD_SYS_DIR: &str = "/sys/module";
 const CMD_MODPROBE: &str = "modprobe";
 
@@ -26,7 +26,7 @@ pub struct KernelModuleGuard {
 
 impl KernelModuleGuard {
     pub fn new() -> Result<Self> {
-        let instance: KernelModuleGuard = Self {
+        let instance = Self {
             name: KMOD_NAME.to_string(),
             sys_path: Path::new(KMOD_SYS_DIR).join(KMOD_NAME),
         };

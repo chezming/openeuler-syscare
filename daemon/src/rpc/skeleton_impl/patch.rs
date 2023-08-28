@@ -2,68 +2,55 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::{Context, Result};
 
-use parking_lot::RwLock;
+use log::error;
 use syscare_abi::{PackageInfo, PatchInfo, PatchListRecord, PatchStateRecord};
 
-use crate::patch::{Patch, PatchManager, PatchMonitor, PatchTransaction};
+use crate::patch::{Patch, PatchManager, PatchTransaction};
 
 use super::{
     function::{RpcFunction, RpcResult},
     skeleton::PatchSkeleton,
 };
 
-pub struct PatchSkeletonImpl {
-    patch_manager: Arc<RwLock<PatchManager>>,
-    _patch_monitor: PatchMonitor,
-}
+pub struct PatchSkeletonImpl;
 
 impl PatchSkeletonImpl {
-    pub fn new<P: AsRef<Path>>(patch_root: P) -> Result<Self> {
-        let patch_manager = Arc::new(RwLock::new(PatchManager::new(patch_root)?));
-        let patch_monitor = PatchMonitor::new(patch_manager.clone())?;
-
-        Ok(Self {
-            patch_manager,
-            _patch_monitor: patch_monitor,
-        })
+    pub fn initialize<P: AsRef<Path>>(patch_root: P) -> Result<()> {
+        PatchManager::initialize(patch_root)
     }
-}
 
-impl PatchSkeletonImpl {
     fn normalize_identifier(identifier: &mut String) {
         while identifier.ends_with('/') {
             identifier.pop();
         }
     }
 
-    fn parse_state_record(&self, patch: &Patch) -> PatchStateRecord {
+    fn parse_state_record(&self, patch: &Patch) -> Result<PatchStateRecord> {
         let patch_name = patch.to_string();
-        let patch_status = self
-            .patch_manager
+        let patch_status = PatchManager::get_instance()?
             .write()
             .get_patch_status(patch)
             .unwrap_or_default();
 
-        PatchStateRecord {
+        Ok(PatchStateRecord {
             name: patch_name,
             status: patch_status,
-        }
+        })
     }
 
-    fn parse_list_record(&self, patch: &Patch) -> PatchListRecord {
+    fn parse_list_record(&self, patch: &Patch) -> Result<PatchListRecord> {
         let patch_uuid = patch.uuid.to_owned();
         let patch_name = patch.to_string();
-        let patch_status = self
-            .patch_manager
+        let patch_status = PatchManager::get_instance()?
             .write()
             .get_patch_status(patch)
             .unwrap_or_default();
 
-        PatchListRecord {
+        Ok(PatchListRecord {
             uuid: patch_uuid,
             name: patch_name,
             status: patch_status,
-        }
+        })
     }
 }
 
@@ -73,7 +60,6 @@ impl PatchSkeleton for PatchSkeletonImpl {
         RpcFunction::call(move || -> Result<Vec<PatchStateRecord>> {
             PatchTransaction::new(
                 format!("Apply patch '{}'", identifier),
-                self.patch_manager.clone(),
                 PatchManager::apply_patch,
                 identifier,
             )?
@@ -86,7 +72,6 @@ impl PatchSkeleton for PatchSkeletonImpl {
         RpcFunction::call(move || -> Result<Vec<PatchStateRecord>> {
             PatchTransaction::new(
                 format!("Remove patch '{}'", identifier),
-                self.patch_manager.clone(),
                 PatchManager::remove_patch,
                 identifier,
             )?
@@ -99,7 +84,6 @@ impl PatchSkeleton for PatchSkeletonImpl {
         RpcFunction::call(move || -> Result<Vec<PatchStateRecord>> {
             PatchTransaction::new(
                 format!("Active patch '{}'", identifier),
-                self.patch_manager.clone(),
                 PatchManager::active_patch,
                 identifier,
             )?
@@ -112,7 +96,6 @@ impl PatchSkeleton for PatchSkeletonImpl {
         RpcFunction::call(move || -> Result<Vec<PatchStateRecord>> {
             PatchTransaction::new(
                 format!("Deactive patch '{}'", identifier),
-                self.patch_manager.clone(),
                 PatchManager::deactive_patch,
                 identifier,
             )?
@@ -125,7 +108,6 @@ impl PatchSkeleton for PatchSkeletonImpl {
         RpcFunction::call(move || -> Result<Vec<PatchStateRecord>> {
             PatchTransaction::new(
                 format!("Accept patch '{}'", identifier),
-                self.patch_manager.clone(),
                 PatchManager::accept_patch,
                 identifier,
             )?
@@ -135,11 +117,11 @@ impl PatchSkeleton for PatchSkeletonImpl {
 
     fn get_patch_list(&self) -> RpcResult<Vec<PatchListRecord>> {
         RpcFunction::call(move || -> Result<Vec<PatchListRecord>> {
-            let patch_list: Vec<Arc<Patch>> = self.patch_manager.read().get_patch_list();
+            let patch_list: Vec<Arc<Patch>> = PatchManager::get_instance()?.read().get_patch_list();
 
             let mut result = Vec::new();
             for patch in patch_list {
-                result.push(self.parse_list_record(&patch));
+                result.push(self.parse_list_record(&patch)?);
             }
 
             Ok(result)
@@ -149,11 +131,11 @@ impl PatchSkeleton for PatchSkeletonImpl {
     fn get_patch_status(&self, mut identifier: String) -> RpcResult<Vec<PatchStateRecord>> {
         Self::normalize_identifier(&mut identifier);
         RpcFunction::call(move || -> Result<Vec<PatchStateRecord>> {
-            let patch_list = self.patch_manager.read().get_patch_list();
+            let patch_list = PatchManager::get_instance()?.read().get_patch_list();
 
             let mut result = Vec::new();
             for patch in patch_list {
-                result.push(self.parse_state_record(&patch));
+                result.push(self.parse_state_record(&patch)?);
             }
             Ok(result)
         })
@@ -162,7 +144,9 @@ impl PatchSkeleton for PatchSkeletonImpl {
     fn get_patch_info(&self, mut identifier: String) -> RpcResult<PatchInfo> {
         Self::normalize_identifier(&mut identifier);
         RpcFunction::call(move || -> Result<PatchInfo> {
-            let patch_list = self.patch_manager.read().match_patch(&identifier)?;
+            let patch_list = PatchManager::get_instance()?
+                .read()
+                .match_patch(&identifier)?;
             let patch = patch_list.first().context("No patch matched")?;
 
             Ok(patch.info.as_ref().clone())
@@ -172,7 +156,9 @@ impl PatchSkeleton for PatchSkeletonImpl {
     fn get_patch_target(&self, mut identifier: String) -> RpcResult<PackageInfo> {
         Self::normalize_identifier(&mut identifier);
         RpcFunction::call(move || -> Result<PackageInfo> {
-            let patch_list = self.patch_manager.read().match_patch(&identifier)?;
+            let patch_list = PatchManager::get_instance()?
+                .read()
+                .match_patch(&identifier)?;
             let patch = patch_list.first().context("No patch matched")?;
 
             Ok(patch.info.target.clone())
@@ -181,7 +167,7 @@ impl PatchSkeleton for PatchSkeletonImpl {
 
     fn save_patch_status(&self) -> RpcResult<()> {
         RpcFunction::call(move || -> Result<()> {
-            self.patch_manager
+            PatchManager::get_instance()?
                 .write()
                 .save_patch_status()
                 .context("Failed to save patch status")
@@ -190,10 +176,18 @@ impl PatchSkeleton for PatchSkeletonImpl {
 
     fn restore_patch_status(&self, accepted_only: bool) -> RpcResult<()> {
         RpcFunction::call(move || -> Result<()> {
-            self.patch_manager
+            PatchManager::get_instance()?
                 .write()
                 .restore_patch_status(accepted_only)
                 .context("Failed to restore patch status")
         })
+    }
+}
+
+impl Drop for PatchSkeletonImpl {
+    fn drop(&mut self) {
+        if let Err(e) = self.save_patch_status() {
+            error!("{:?}", e)
+        }
     }
 }

@@ -1,12 +1,22 @@
-use std::process::exit;
+use std::{
+    fs,
+    path::Path,
+    process::exit,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 use anyhow::{ensure, Context, Result};
 use daemonize::Daemonize;
 use jsonrpc_core::IoHandler;
 use jsonrpc_ipc_server::{Server, ServerBuilder};
-use log::{error, info};
+use log::{error, info, LevelFilter};
+use signal_hook::consts::TERM_SIGNALS;
 
-use syscare_common::{os, util::fs};
+use syscare_common::os;
 
 mod args;
 mod fast_reboot;
@@ -25,10 +35,12 @@ use rpc::{
 const DAEMON_NAME: &str = env!("CARGO_PKG_NAME");
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DAEMON_UMASK: u32 = 0o027;
+const DAEMON_SLEEP_TIME: u64 = 100;
 
 struct Daemon {
     uid: u32,
     args: Arguments,
+    term_flag: Arc<AtomicBool>,
 }
 
 impl Daemon {
@@ -36,6 +48,7 @@ impl Daemon {
         Self {
             uid: os::user::id(),
             args: Arguments::new(),
+            term_flag: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -52,16 +65,31 @@ impl Daemon {
 
     fn initialize_logger(&self) -> Result<()> {
         let max_level = self.args.log_level;
-        let duplicate_stdout = !self.args.daemon;
-        Logger::initialize(&self.args.log_dir, max_level, duplicate_stdout)?;
+        let stdout_level = match self.args.daemon {
+            true => LevelFilter::Off,
+            false => max_level,
+        };
+        Logger::initialize(&self.args.log_dir, max_level, stdout_level)?;
 
         Ok(())
     }
 
-    fn prepare_environment(&self) {
-        fs::create_dir_all(&self.args.work_dir).ok();
-        fs::create_dir_all(&self.args.data_dir).ok();
-        fs::create_dir_all(&self.args.log_dir).ok();
+    fn prepare_directory<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let dir_path = path.as_ref();
+        if !dir_path.exists() {
+            fs::create_dir_all(dir_path).with_context(|| {
+                format!("Failed to create directory \"{}\"", dir_path.display())
+            })?;
+        }
+        Ok(())
+    }
+
+    fn prepare_environment(&self) -> Result<()> {
+        self.prepare_directory(&self.args.work_dir)?;
+        self.prepare_directory(&self.args.data_dir)?;
+        self.prepare_directory(&self.args.log_dir)?;
+
+        Ok(())
     }
 
     fn daemonize(&self) -> Result<()> {
@@ -80,26 +108,34 @@ impl Daemon {
     fn initialize_skeletons(&self) -> Result<IoHandler> {
         let mut io_handler = IoHandler::new();
 
-        let patch_skeleton = PatchSkeletonImpl::new(&self.args.data_dir)?;
-        io_handler.extend_with(patch_skeleton.to_delegate());
+        PatchSkeletonImpl::initialize(&self.args.data_dir)
+            .context("Failed to initialize patch skeleton")?;
+
+        io_handler.extend_with(PatchSkeletonImpl.to_delegate());
         io_handler.extend_with(FastRebootSkeletonImpl.to_delegate());
 
         Ok(io_handler)
     }
 
-    fn start_rpc_server(&self, io_handler: IoHandler) -> Result<Server> {
-        let socket_file = self.args.socket_file.as_path();
-        if socket_file.exists() {
-            std::fs::remove_file(socket_file).ok();
+    fn initialize_signal_handler(&self) -> Result<()> {
+        for signal in TERM_SIGNALS {
+            signal_hook::flag::register(*signal, self.term_flag.clone())
+                .with_context(|| format!("Failed to register handler for signal {}", signal))?;
         }
 
-        let builder = ServerBuilder::new(io_handler).set_client_buffer_size(1);
+        Ok(())
+    }
 
-        let server = builder.start(
-            socket_file
-                .to_str()
-                .context("Failed to convert socket path to string")?,
-        )?;
+    fn start_rpc_server(&self, io_handler: IoHandler) -> Result<Server> {
+        let socket_path = &self
+            .args
+            .socket_file
+            .to_str()
+            .context("Failed to convert socket path to string")?;
+
+        let server = ServerBuilder::new(io_handler)
+            .set_client_buffer_size(1)
+            .start(socket_path)?;
 
         Ok(server)
     }
@@ -112,10 +148,14 @@ impl Daemon {
         info!("Syscare Daemon - v{}", DAEMON_VERSION);
         info!("============================");
         info!("Preparing environment...");
-        self.prepare_environment();
+        self.prepare_environment()?;
 
         info!("Start with {:#?}", self.args);
         self.daemonize()?;
+
+        info!("Initializing signal handler...");
+        self.initialize_signal_handler()
+            .context("Failed to initialize signal handler")?;
 
         info!("Initializing skeletons...");
         let io_handler = self
@@ -128,7 +168,12 @@ impl Daemon {
             .context("Failed to create remote procedure call server")?;
 
         info!("Daemon is running...");
-        server.wait();
+        while !self.term_flag.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(DAEMON_SLEEP_TIME));
+        }
+
+        info!("Shutting down...");
+        server.close();
 
         Ok(())
     }
