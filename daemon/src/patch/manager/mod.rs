@@ -11,8 +11,6 @@ use indexmap::IndexMap;
 use lazy_static::lazy_static;
 use log::{debug, error, info, trace, warn};
 
-use once_cell::sync::OnceCell;
-use parking_lot::RwLock;
 use syscare_abi::{PatchStatus, PatchType};
 use syscare_common::util::{fs, serde};
 
@@ -24,7 +22,7 @@ mod monitor;
 use dependency::PatchManagerDependency;
 use driver::{KernelPatchDriver, PatchDriver, UserPatchDriver};
 pub use entity::Patch;
-use monitor::PatchMonitor;
+pub use monitor::PatchMonitor;
 
 pub const PATCH_INFO_FILE_NAME: &str = "patch_info";
 const PATCH_INSTALL_DIR: &str = "patches";
@@ -40,8 +38,7 @@ const PATCH_DEACTIVE: TransitionAction = &PatchManager::driver_deactive_patch;
 const PATCH_ACCEPT: TransitionAction = &PatchManager::do_patch_accept;
 const PATCH_DECLINE: TransitionAction = &PatchManager::do_patch_decline;
 
-static INSTANCE: OnceCell<Arc<RwLock<PatchManager>>> = OnceCell::new();
-static MONITOR: OnceCell<PatchMonitor> = OnceCell::new();
+const PATCH_INIT_RESTORE_ACCEPTED_ONLY: bool = true;
 
 lazy_static! {
     static ref DRIVER_MAP: IndexMap<PatchType, Box<dyn PatchDriver>> = IndexMap::from([
@@ -119,41 +116,26 @@ pub struct PatchManager {
 }
 
 impl PatchManager {
-    pub fn initialize<P: AsRef<Path>>(patch_root: P) -> Result<()> {
-        debug!("Initializing patch manager...");
-        INSTANCE
-            .get_or_try_init(|| -> Result<Arc<RwLock<PatchManager>>> {
-                let _dependency = PatchManagerDependency::new()?;
-                let patch_install_dir = patch_root.as_ref().join(PATCH_INSTALL_DIR);
-                let patch_status_file = patch_root.as_ref().join(PATCH_STATUS_FILE_NAME);
-                let entry_map = Self::scan_patches(&patch_install_dir)?;
+    pub fn new<P: AsRef<Path>>(patch_root: P) -> Result<Self> {
+        let _dependency = PatchManagerDependency::new()?;
+        let patch_install_dir = patch_root.as_ref().join(PATCH_INSTALL_DIR);
+        let patch_status_file = patch_root.as_ref().join(PATCH_STATUS_FILE_NAME);
+        let entry_map = Self::scan_patches(&patch_install_dir)?;
 
-                Ok(Arc::new(RwLock::new(Self {
-                    _dependency,
-                    patch_install_dir,
-                    patch_status_file,
-                    entry_map,
-                })))
-            })
-            .context("Failed to initialize patch manager")?;
+        let mut instance = Self {
+            _dependency,
+            patch_install_dir,
+            patch_status_file,
+            entry_map,
+        };
 
-        debug!("Initializing patch monitor...");
-        MONITOR
-            .get_or_try_init(|| -> Result<PatchMonitor> { PatchMonitor::new() })
-            .context("Failed to initialize patch monitor")?;
+        instance
+            .restore_patch_status(PATCH_INIT_RESTORE_ACCEPTED_ONLY)
+            .context("Failed to restore patch status")?;
 
-        Ok(())
+        Ok(instance)
     }
 
-    pub fn get_instance() -> Result<Arc<RwLock<Self>>> {
-        INSTANCE
-            .get()
-            .context("Patch manager is not initialized")
-            .cloned()
-    }
-}
-
-impl PatchManager {
     pub fn match_patch(&self, identifier: &str) -> Result<Vec<Arc<Patch>>> {
         debug!("Matching patch by \"{}\"...", identifier);
         let match_result = match self.find_patch_by_uuid(identifier) {
@@ -270,7 +252,7 @@ impl PatchManager {
     }
 
     pub fn restore_patch_status(&mut self, accepted_only: bool) -> Result<()> {
-        debug!("Reading patch status from file...");
+        debug!("Reading patch status...");
         let status_map =
             match serde::deserialize::<HashMap<String, PatchStatus>, _>(&self.patch_status_file) {
                 Ok(map) => map,
@@ -293,7 +275,7 @@ impl PatchManager {
             .filter_map(|(uuid, status)| match self.find_patch_by_uuid(&uuid) {
                 Ok(patch) => {
                     if accepted_only && (status != PatchStatus::Accepted) {
-                        info!(
+                        debug!(
                             "Skipped patch \"{}\", status is not \"{}\"",
                             patch,
                             PatchStatus::Accepted
@@ -308,6 +290,7 @@ impl PatchManager {
                 }
             })
             .collect::<Vec<_>>();
+
         restore_list.sort_by(|(lhs_patch, lhs_status), (rhs_patch, rhs_status)| {
             match lhs_status.cmp(rhs_status) {
                 Ordering::Less => Ordering::Less,
