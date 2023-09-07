@@ -42,8 +42,8 @@ Options:
 | ---- | ---- | ---- | ---- |
 |-n, --patch-name ```<PATCH_NAME>```|补丁名称|字符串|必选参数，需符合RPM命名规范|
 |--patch-arch ```<PATCH_ARCH>```|补丁架构|字符串|默认为当前架构，需符合RPM命名规范|
-|--patch-version ```<PATCH_VERSION>```|补丁版本号|字符串|默认值为1，需符合RPM命名规范|
-|--patch-release ```<PATCH_RELEASE>```|补丁release|数字|默认值为1，需符合RPM命名规范|
+|--patch-version ```<PATCH_VERSION>```|补丁版本号|字符串|缺省值为1，需符合RPM命名规范|
+|--patch-release ```<PATCH_RELEASE>```|补丁release|数字|缺省值为1，需符合RPM命名规范|
 |--patch-description ```<PATCH_DESCRIPTION>```|补丁描述|字符串|默认为(none)|
 |-s, --source ```<SOURCE>```|目标软件src.rpm源码包路径|字符串|必选参数，需为合法路径|
 |-d, --debuginfo ```<DEBUGINFO>```|目标软件debuginfo包路径|字符串|必选参数，需为合法路径|
