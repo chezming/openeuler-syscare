@@ -2,10 +2,11 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 
 use std::io::{BufReader, Read};
+use std::os::unix::prelude::{OsStrExt, OsStringExt};
 use std::process::{Command, Stdio};
 use std::thread::JoinHandle;
 
-use log::{debug, trace};
+use log::trace;
 
 use super::raw_line::RawLines;
 
@@ -118,20 +119,23 @@ impl ExternCommand<'_> {
         R: Read + Send + Sync + 'static,
     {
         std::thread::spawn(move || -> std::io::Result<OsString> {
-            let mut last_line = OsString::new();
+            let mut output = Vec::new();
 
-            for read_line in RawLines::from(BufReader::new(stdio)) {
-                last_line = read_line?;
-                trace!("{}", last_line.to_string_lossy());
+            for line in RawLines::from(BufReader::new(stdio)).flatten() {
+                trace!("{}", line.to_string_lossy());
+
+                output.extend(line.into_vec());
+                output.push(b'\n');
             }
+            output.pop();
 
-            Ok(last_line)
+            Ok(OsStr::from_bytes(&output).into())
         })
     }
 
     #[inline(always)]
     fn execute_command(&self, mut command: Command) -> std::io::Result<ExternCommandExitStatus> {
-        debug!("Executing {:?}", command);
+        trace!("Executing {:?}", command);
 
         let mut child = command
             .stdout(Stdio::piped())
@@ -189,7 +193,7 @@ impl<'a> ExternCommand<'a> {
 
     pub fn execvp(&self, args: ExternCommandArgs) -> std::io::Result<ExternCommandExitStatus> {
         let mut command = Command::new(self.path);
-        command.args(args.into_iter());
+        command.args(args);
 
         self.execute_command(command)
     }
@@ -200,8 +204,8 @@ impl<'a> ExternCommand<'a> {
         vars: ExternCommandEnvs,
     ) -> std::io::Result<ExternCommandExitStatus> {
         let mut command = Command::new(self.path);
-        command.args(args.into_iter());
-        command.envs(vars.into_iter());
+        command.args(args);
+        command.envs(vars);
 
         self.execute_command(command)
     }
