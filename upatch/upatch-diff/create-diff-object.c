@@ -56,7 +56,6 @@
 #include "elf-resolve.h"
 #include "elf-create.h"
 #include "running-elf.h"
-#include "upatch-manage.h"
 #include "upatch-patch.h"
 
 enum loglevel loglevel = NORMAL;
