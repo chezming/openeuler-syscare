@@ -20,7 +20,6 @@
 
 #include <sys/ioctl.h>
 
-#include "upatch-manage.h"
 #include "upatch-ioctl.h"
 
 #define COMMAND_SIZE 8

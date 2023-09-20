@@ -9,6 +9,7 @@ file(GLOB TOOL_SRC_FILES
     *.c
 )
 
+add_compile_options(-DUPATCH_VERSION="${SYSCARE_VERSION}")
 add_executable(upatch-tool ${TOOL_SRC_FILES})
 
 install(
