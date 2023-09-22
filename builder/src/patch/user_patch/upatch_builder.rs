@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use lazy_static::lazy_static;
 use uuid::Uuid;
 use which::which;
 
@@ -24,6 +25,11 @@ use crate::{
 };
 
 use super::upatch_builder_args::UserPatchBuilderArguments;
+
+lazy_static! {
+    static ref UPATCH_BUILD: ExternCommand =
+        ExternCommand::new("/usr/libexec/syscare/upatch-build");
+}
 
 pub struct UserPatchBuilder<'a> {
     workdir: &'a WorkDir,
@@ -71,17 +77,17 @@ impl<'a> UserPatchBuilder<'a> {
 
     fn build_cmd_args(&self, uargs: &UserPatchBuilderArguments) -> ExternCommandArgs {
         let mut cmd_args = ExternCommandArgs::new()
-            .arg("--work_dir")
+            .arg("--work-dir")
             .arg(&uargs.work_dir)
-            .arg("--source_dir")
+            .arg("--source-dir")
             .arg(&uargs.source_dir)
-            .arg("--elf_dir")
+            .arg("--elf-dir")
             .arg(&uargs.elf_dir)
-            .arg("--build_source_cmd")
+            .arg("--build-source-cmd")
             .arg(&uargs.build_source_cmd)
-            .arg("--build_patch_cmd")
+            .arg("--build-patch-cmd")
             .arg(&uargs.build_patch_cmd)
-            .arg("--output_dir")
+            .arg("--output-dir")
             .arg(&uargs.output_dir);
 
         for compiler in &uargs.compiler_list {
@@ -90,14 +96,14 @@ impl<'a> UserPatchBuilder<'a> {
 
         for (elf, debuginfo) in &uargs.debug_relations {
             cmd_args = cmd_args
-                .arg("--elf_path")
+                .arg("--elf-path")
                 .arg(elf)
                 .arg("--debuginfo")
                 .arg(debuginfo)
         }
 
         if uargs.skip_compiler_check {
-            cmd_args = cmd_args.arg("--skip_compiler_check");
+            cmd_args = cmd_args.arg("--skip-compiler-check");
         }
         if uargs.verbose {
             cmd_args = cmd_args.arg("--verbose");
@@ -222,8 +228,6 @@ impl PatchBuilder for UserPatchBuilder<'_> {
     }
 
     fn build_patch(&self, args: &PatchBuilderArguments) -> Result<()> {
-        const UPATCH_BUILD: ExternCommand = ExternCommand::new("/usr/libexec/syscare/upatch-build");
-
         match args {
             PatchBuilderArguments::UserPatch(uargs) => UPATCH_BUILD
                 .execve(self.build_cmd_args(uargs), self.build_cmd_envs())?
