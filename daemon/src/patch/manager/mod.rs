@@ -14,17 +14,15 @@ use log::{debug, error, info, trace, warn};
 use syscare_abi::{PatchStatus, PatchType};
 use syscare_common::util::{fs, serde};
 
-mod dependency;
 mod driver;
 mod entity;
 mod monitor;
 
-use dependency::PatchManagerDependency;
 use driver::{KernelPatchDriver, PatchDriver, UserPatchDriver};
 pub use entity::Patch;
 pub use monitor::PatchMonitor;
 
-pub const PATCH_INFO_FILE_NAME: &str = "patch_info";
+const PATCH_INFO_FILE_NAME: &str = "patch_info";
 const PATCH_INSTALL_DIR: &str = "patches";
 const PATCH_STATUS_FILE_NAME: &str = "patch_status";
 
@@ -35,22 +33,12 @@ const PATCH_APPLY: TransitionAction = &PatchManager::driver_apply_patch;
 const PATCH_REMOVE: TransitionAction = &PatchManager::driver_remove_patch;
 const PATCH_ACTIVE: TransitionAction = &PatchManager::driver_active_patch;
 const PATCH_DEACTIVE: TransitionAction = &PatchManager::driver_deactive_patch;
-const PATCH_ACCEPT: TransitionAction = &PatchManager::do_patch_accept;
-const PATCH_DECLINE: TransitionAction = &PatchManager::do_patch_decline;
+const PATCH_ACCEPT: TransitionAction = &PatchManager::driver_accept_patch;
+const PATCH_DECLINE: TransitionAction = &PatchManager::driver_decline_patch;
 
 const PATCH_INIT_RESTORE_ACCEPTED_ONLY: bool = true;
 
 lazy_static! {
-    static ref DRIVER_MAP: IndexMap<PatchType, Box<dyn PatchDriver>> = IndexMap::from([
-        (
-            PatchType::KernelPatch,
-            Box::new(KernelPatchDriver) as Box<dyn PatchDriver>
-        ),
-        (
-            PatchType::UserPatch,
-            Box::new(UserPatchDriver) as Box<dyn PatchDriver>
-        ),
-    ]);
     static ref TRANSITION_MAP: IndexMap<Transition, Vec<TransitionAction>> = IndexMap::from([
         (
             (PatchStatus::NotApplied, PatchStatus::Deactived),
@@ -109,33 +97,38 @@ struct PatchEntry {
 }
 
 pub struct PatchManager {
-    _dependency: PatchManagerDependency,
     patch_install_dir: PathBuf,
     patch_status_file: PathBuf,
     entry_map: IndexMap<String, PatchEntry>,
+    driver_map: IndexMap<PatchType, Box<dyn PatchDriver>>,
 }
 
 impl PatchManager {
     pub fn new<P: AsRef<Path>>(patch_root: P) -> Result<Self> {
-        let _dependency = PatchManagerDependency::new()?;
         let patch_install_dir = patch_root.as_ref().join(PATCH_INSTALL_DIR);
         let patch_status_file = patch_root.as_ref().join(PATCH_STATUS_FILE_NAME);
+        let driver_map = Self::create_driver_map();
         let entry_map = Self::scan_patches(&patch_install_dir)?;
 
         let mut instance = Self {
-            _dependency,
             patch_install_dir,
             patch_status_file,
+            driver_map,
             entry_map,
         };
-
-        instance
-            .restore_patch_status(PATCH_INIT_RESTORE_ACCEPTED_ONLY)
-            .context("Failed to restore patch status")?;
+        instance.restore_patch_status(PATCH_INIT_RESTORE_ACCEPTED_ONLY)?;
 
         Ok(instance)
     }
 
+    fn finallize(&mut self) {
+        if let Err(e) = self.save_patch_status() {
+            error!("{:?}", e)
+        }
+    }
+}
+
+impl PatchManager {
     pub fn match_patch(&self, identifier: &str) -> Result<Vec<Arc<Patch>>> {
         debug!("Matching patch by \"{}\"...", identifier);
         let match_result = match self.find_patch_by_uuid(identifier) {
@@ -172,18 +165,6 @@ impl PatchManager {
         }
 
         Ok(status)
-    }
-
-    pub fn set_patch_status(&mut self, patch: &Patch, value: PatchStatus) -> Result<()> {
-        if value == PatchStatus::Unknown {
-            bail!("Cannot set patch {} status to {}", patch, value);
-        }
-        self.entry_map
-            .get_mut(&patch.uuid)
-            .with_context(|| format!("Cannot find patch \"{}\"", patch))?
-            .status = value;
-
-        Ok(())
     }
 
     pub fn apply_patch(&mut self, patch: &Patch) -> Result<PatchStatus> {
@@ -247,29 +228,28 @@ impl PatchManager {
         serde::serialize(&status_map, &self.patch_status_file)
             .context("Failed to write patch status file")?;
 
+        fs::sync();
         info!("All patch status were saved");
         Ok(())
     }
 
     pub fn restore_patch_status(&mut self, accepted_only: bool) -> Result<()> {
+        info!("Restoring all patch status...");
+
         debug!("Reading patch status...");
-        let status_map =
-            match serde::deserialize::<HashMap<String, PatchStatus>, _>(&self.patch_status_file) {
-                Ok(map) => map,
-                Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    warn!("Cannot find patch status file");
-                    return Ok(());
-                }
-                Err(_) => {
-                    bail!("Failed to read patch status");
-                }
-            };
+        let status_file = &self.patch_status_file;
+        let status_map: HashMap<String, PatchStatus> = match status_file.exists() {
+            true => serde::deserialize(status_file).context("Failed to read patch status")?,
+            false => {
+                warn!("Cannot find patch status file");
+                return Ok(());
+            }
+        };
 
         /*
          * To ensure that we won't load multiple patches for same target at the same time,
          * we take a sort operation of the status to make sure do REMOVE operation at first
          */
-        info!("Restoring all patch status...");
         let mut restore_list = status_map
             .into_iter()
             .filter_map(|(uuid, status)| match self.find_patch_by_uuid(&uuid) {
@@ -450,18 +430,56 @@ impl PatchManager {
         }
         Ok(match_result)
     }
+
+    fn set_patch_status(&mut self, patch: &Patch, value: PatchStatus) -> Result<()> {
+        if value == PatchStatus::Unknown {
+            bail!("Cannot set patch {} status to {}", patch, value);
+        }
+        self.entry_map
+            .get_mut(&patch.uuid)
+            .with_context(|| format!("Cannot find patch \"{}\"", patch))?
+            .status = value;
+
+        Ok(())
+    }
 }
 
 impl PatchManager {
-    fn call_driver<T, U>(&self, patch: &Patch, driver_action: T) -> Result<U>
+    fn create_driver_map() -> IndexMap<PatchType, Box<dyn PatchDriver>> {
+        let mut driver_map = IndexMap::new();
+
+        debug!("Initializing kernel patch driver...");
+        driver_map.insert(
+            PatchType::KernelPatch,
+            Box::new(KernelPatchDriver) as Box<dyn PatchDriver>,
+        );
+
+        debug!("Initializing user patch driver...");
+        match UserPatchDriver::new().context("Failed to initialize user patch driver") {
+            Ok(upatch_driver) => {
+                driver_map.insert(
+                    PatchType::UserPatch,
+                    Box::new(upatch_driver) as Box<dyn PatchDriver>,
+                );
+            }
+            Err(e) => {
+                error!("{:?}", e);
+            }
+        }
+
+        driver_map
+    }
+
+    fn call_driver<'a, T, U>(&'a self, patch: &Patch, driver_action: T) -> Result<U>
     where
-        T: FnOnce(&'static dyn PatchDriver, &Patch) -> Result<U>,
+        T: FnOnce(&'a dyn PatchDriver, &Patch) -> Result<U>,
     {
         let patch_type = patch.kind();
-        let driver = DRIVER_MAP
+        let driver = self
+            .driver_map
             .get(&patch_type)
             .map(Box::deref)
-            .with_context(|| format!("Failed to get driver of {}", patch_type))?;
+            .with_context(|| format!("Driver: Failed to get {} driver", patch_type))?;
 
         driver_action(driver, patch)
     }
@@ -502,11 +520,17 @@ impl PatchManager {
         self.set_patch_status(patch, PatchStatus::Deactived)
     }
 
-    fn do_patch_accept(&mut self, patch: &Patch) -> Result<()> {
+    fn driver_accept_patch(&mut self, patch: &Patch) -> Result<()> {
         self.set_patch_status(patch, PatchStatus::Accepted)
     }
 
-    fn do_patch_decline(&mut self, patch: &Patch) -> Result<()> {
+    fn driver_decline_patch(&mut self, patch: &Patch) -> Result<()> {
         self.set_patch_status(patch, PatchStatus::Actived)
+    }
+}
+
+impl Drop for PatchManager {
+    fn drop(&mut self) {
+        self.finallize()
     }
 }
