@@ -1,23 +1,15 @@
 # SPDX-License-Identifier: GPL-2.0
 
+add_subdirectory(ko)
+
+set(CMAKE_C_FLAGS "-fPIE")
 include_directories(
-    ../upatch-manage/
     ./
+    ./ko/include
 )
 
-file(GLOB TOOL_SRC_FILES
+file(GLOB UPATCH_LIB_SRC_FILES
     *.c
 )
 
-add_executable(upatch-tool ${TOOL_SRC_FILES})
-
-install(
-    TARGETS
-        upatch-tool
-    PERMISSIONS
-        OWNER_EXECUTE OWNER_WRITE OWNER_READ
-        GROUP_EXECUTE GROUP_READ
-        WORLD_READ WORLD_EXECUTE
-    DESTINATION
-        ${SYSCARE_LIBEXEC_DIR}
-)
+add_library(upatch-tool-lib ${UPATCH_LIB_SRC_FILES})
