@@ -138,8 +138,8 @@ unsigned long get_new_insn(struct object_file *obj, unsigned long old_addr,
 {
 	char jmp_insn[] = { 0xe9, 0x00, 0x00, 0x00, 0x00 }; /* jmp IMM */
 
-	*(unsigned int *)(jmp_insn + 1) =
-		(unsigned int)(new_addr - old_addr - 5);
+	*(int *)(jmp_insn + 1) =
+		(int)(new_addr - old_addr - 5);
 
-	return *(unsigned int *)jmp_insn;
+	return *(unsigned long *)jmp_insn;
 }
