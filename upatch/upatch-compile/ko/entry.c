@@ -90,8 +90,7 @@ int entry_get(const char *search, struct upatch_entry_des *value)
     ht = __entries_lookup(search);
     if (ht)
         ret = __entry_sync(ht, value);
-    else
-        ret = __entry_create(search, value);
+    ret = __entry_create(search, value);
     spin_unlock(&entries_lock);
     return ret;
 }
