@@ -197,9 +197,11 @@ static int patch_deactive_in_cover(struct upatch_meta_patch *patch)
 static int list_add_symbol(struct list_head *head, struct upatch_meta_symbol *sym)
 {
 	struct upatch_meta_symbol *newsym = (struct upatch_meta_symbol *)malloc(sizeof(struct upatch_meta_symbol));
-	if (newsym == NULL)
+	if (newsym == NULL) {
 		return ENOMEM;
+	}
 	memset(newsym, 0, sizeof(struct upatch_meta_symbol));
+
 	strncpy(newsym->name, sym->name, sizeof(newsym->name));
 	newsym->offset = sym->offset;
 	INIT_LIST_HEAD(&newsym->self);
@@ -212,9 +214,11 @@ static int list_add_symbol(struct list_head *head, struct upatch_meta_symbol *sy
 static int list_add_symbol_for_patch(struct upatch_meta_patch *patch, struct list_head *head, struct upatch_meta_symbol *sym)
 {
 	struct upatch_meta_symbol *newsym = (struct upatch_meta_symbol *)malloc(sizeof(struct upatch_meta_symbol));
-	if (newsym == NULL)
+	if (newsym == NULL) {
 		return ENOMEM;
+	}
 	memset(newsym, 0, sizeof(struct upatch_meta_symbol));
+
 	strncpy(newsym->name, sym->name, sizeof(newsym->name));
 	newsym->offset = sym->offset;
 	INIT_LIST_HEAD(&newsym->self);
@@ -573,7 +577,6 @@ patch_status_e meta_get_patch_status(const char *uuid)
 	}
 	patch = find_patch_by_uuid(uuid);
 	if (patch == NULL) {
-		log_warn("can't find patch uuid:%s failed to get status\n", uuid);
 		return UPATCH_PATCH_STATUS_NOT_APPLIED;
 	}
 	return patch->status;
