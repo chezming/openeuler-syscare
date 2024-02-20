@@ -1,4 +1,4 @@
-* # SysCare: 系统热服务
+# SysCare: 系统热服务
 
 ## 介绍
 
@@ -43,6 +43,20 @@
     make install
     ```
 
+  * 离线编译
+    首先在网络的环境上执行cargo vendor下载所有依赖到./vendor目录下
+    ```
+    cd syscare
+    cargo vendor
+    ```
+    源码目录创建.cargo/config.toml，并写入以下设置，下次编译就不需要联网了
+    ```
+    [source.crates-io]
+    replace-with = "vendored-sources"
+
+    [source.vendored-sources]
+    directory = "vendor"
+    ```
 
 ### rpm安装
 
@@ -79,7 +93,7 @@ $ syscare build \
    --patch ./0001-test.patch
 ```
 
-补丁制作详细使用说明请见[build/README.md](https://gitee.com/openeuler/syscare/blob/master/build/README.md)
+补丁制作详细使用说明请见[builder/README.md](https://gitee.com/openeuler/syscare/blob/master/builder/README.md)
 
 
 
