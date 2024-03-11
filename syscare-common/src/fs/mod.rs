@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Mulan PSL v2
 /*
  * Copyright (c) 2024 Huawei Technologies Co., Ltd.
- * upatch-build is licensed under Mulan PSL v2.
+ * syscare-common is licensed under Mulan PSL v2.
  * You can use this software according to the terms and conditions of the Mulan PSL v2.
  * You may obtain a copy of Mulan PSL v2 at:
  *         http://license.coscl.org.cn/MulanPSL2
@@ -12,8 +12,10 @@
  * See the Mulan PSL v2 for more details.
  */
 
-mod command;
-mod raw_line;
+mod flock;
+mod fs_impl;
+mod mapped_file;
 
-pub use command::*;
-pub use raw_line::*;
+pub use flock::*;
+pub use fs_impl::*;
+pub use mapped_file::*;
