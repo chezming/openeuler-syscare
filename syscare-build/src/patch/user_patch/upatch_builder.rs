@@ -25,8 +25,7 @@ use which::which;
 
 use syscare_abi::{PackageInfo, PatchEntity, PatchFile, PatchInfo, PatchType};
 use syscare_common::{
-    ffi::OsStringExt,
-    fs,
+    args_os, concat_os, fs,
     process::{Command, CommandArgs, CommandEnvs},
     util::digest,
 };
@@ -34,6 +33,7 @@ use syscare_common::{
 use crate::{build_params::BuildParameters, package::ElfRelation, patch::PatchBuilder, PKG_IMPL};
 
 const UPATCH_BUILD_BIN: &str = "/usr/libexec/syscare/upatch-build";
+const RPMBUILD_BIN: &str = "rpmbuild";
 
 struct UBuildParameters {
     work_dir: PathBuf,
@@ -44,8 +44,8 @@ struct UBuildParameters {
     patch_output_dir: PathBuf,
     compiler_list: Vec<PathBuf>,
     elf_relations: Vec<ElfRelation>,
-    build_cmd_original: OsString,
-    build_cmd_patched: OsString,
+    prepare_cmd: OsString,
+    build_cmd: OsString,
     patch_name: String,
     patch_type: PatchType,
     patch_version: String,
@@ -74,29 +74,22 @@ impl UserPatchBuilder {
     }
 
     fn create_topdir_macro<P: AsRef<Path>>(&self, buildroot: P) -> OsString {
-        OsString::from("--define \"_topdir")
-            .append(buildroot.as_ref())
-            .join("\"")
+        concat_os!("--define '_topdir ", buildroot.as_ref(), "'")
     }
 
     fn create_build_macros(&self, jobs: usize) -> OsString {
-        OsString::new()
-            .append("--define \"_smp_build_ncpus")
-            .append(jobs.to_string())
-            .join("\"")
-            .append("--define \"__spec_install_post %{nil}\"")
-            .append("--define \"__find_provides %{nil}\"")
-            .append("--define \"__find_requires %{nil}\"")
-            .append("--define \"_use_internal_dependency_generator 0\"")
+        args_os!(
+            concat_os!("--define '_smp_build_ncpus ", jobs.to_string(), "'"),
+            "--define '__spec_install_post %{nil}'",
+            "--define '__find_provides %{nil}'",
+            "--define '__find_requires %{nil}'",
+            "--define '_use_internal_dependency_generator 0'",
+        )
     }
 }
 
 impl UserPatchBuilder {
     fn build_prepare(&self, build_params: &BuildParameters) -> Result<UBuildParameters> {
-        const RPMBUILD_CMD: &str = "rpmbuild";
-        const RPMBUILD_PERP_FLAGS: &str = "-bp";
-        const RPMBUILD_FLAGS: &str = "-bb --noprep --nocheck --nodebuginfo --noclean";
-
         let pkg_build_root = &build_params.pkg_build_root;
         let pkg_binary_dir = pkg_build_root.buildroot.clone();
         let pkg_output_dir = pkg_build_root.rpms.clone();
@@ -113,24 +106,14 @@ impl UserPatchBuilder {
         let topdir_macro = self.create_topdir_macro(pkg_build_root);
         let build_macros = self.create_build_macros(build_params.jobs);
 
-        let build_cmd_prep = OsString::from(RPMBUILD_CMD)
-            .append(&topdir_macro)
-            .append(RPMBUILD_PERP_FLAGS)
-            .append(patch_spec);
-
-        let build_cmd_original = OsString::from(RPMBUILD_CMD)
-            .append(&topdir_macro)
-            .append(&build_macros)
-            .append(RPMBUILD_FLAGS)
-            .append(patch_spec)
-            .append("&&")
-            .append(build_cmd_prep);
-
-        let build_cmd_patched = OsString::from(RPMBUILD_CMD)
-            .append(&topdir_macro)
-            .append(&build_macros)
-            .append(RPMBUILD_FLAGS)
-            .append(patch_spec);
+        let prepare_cmd = args_os!(RPMBUILD_BIN, &topdir_macro, "-bp", patch_spec);
+        let build_cmd = args_os!(
+            RPMBUILD_BIN,
+            &topdir_macro,
+            &build_macros,
+            "-bb --noprep --nocheck --nodebuginfo --noclean",
+            patch_spec
+        );
 
         info!("- Detecting compilers");
         let compiler_list = self.detect_compilers();
@@ -155,8 +138,8 @@ impl UserPatchBuilder {
             patch_output_dir,
             compiler_list,
             elf_relations,
-            build_cmd_original,
-            build_cmd_patched,
+            prepare_cmd,
+            build_cmd,
             patch_name: build_params.patch_name.to_owned(),
             patch_type: build_params.patch_type.to_owned(),
             patch_version: build_params.patch_version.to_owned(),
@@ -183,10 +166,10 @@ impl UserPatchBuilder {
             .arg(&ubuild_params.patch_source_dir)
             .arg("--elf-dir")
             .arg(&ubuild_params.pkg_binary_dir)
-            .arg("--build-source-cmd")
-            .arg(&ubuild_params.build_cmd_original)
-            .arg("--build-patch-cmd")
-            .arg(&ubuild_params.build_cmd_patched)
+            .arg("--prepare-cmd")
+            .arg(&ubuild_params.prepare_cmd)
+            .arg("--build-cmd")
+            .arg(&ubuild_params.build_cmd)
             .arg("--output-dir")
             .arg(&ubuild_params.patch_output_dir);
 
@@ -196,7 +179,7 @@ impl UserPatchBuilder {
         for elf_relation in &ubuild_params.elf_relations {
             cmd_args
                 .arg("--elf")
-                .arg(OsString::from("*").join(&elf_relation.elf))
+                .arg(concat_os!("*", &elf_relation.elf))
                 .arg("--debuginfo")
                 .arg(&elf_relation.debuginfo);
         }
