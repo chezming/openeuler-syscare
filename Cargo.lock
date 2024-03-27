@@ -1111,7 +1111,7 @@ dependencies = [
 
 [[package]]
 name = "syscare"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1126,14 +1126,14 @@ dependencies = [
 
 [[package]]
 name = "syscare-abi"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "syscare-build"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1152,7 +1152,7 @@ dependencies = [
 
 [[package]]
 name = "syscare-common"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "anyhow",
  "lazy_static",
@@ -1167,10 +1167,9 @@ dependencies = [
 
 [[package]]
 name = "syscared"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "anyhow",
- "cc",
  "clap",
  "daemonize",
  "flexi_logger",
@@ -1182,11 +1181,13 @@ dependencies = [
  "lazy_static",
  "log",
  "nix",
+ "object",
  "parking_lot",
  "serde",
  "signal-hook",
  "syscare-abi",
  "syscare-common",
+ "uuid",
 ]
 
 [[package]]
@@ -1309,7 +1310,7 @@ checksum = "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b"
 
 [[package]]
 name = "upatch-build"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1332,7 +1333,7 @@ dependencies = [
 
 [[package]]
 name = "upatchd"
-version = "1.2.0"
+version = "1.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1358,6 +1359,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9fde2f6a4bea1d6e007c4ad38c6839fa71cbb63b6dbf5b595aa38dc9b1093c11"
 dependencies = [
  "rand",
+ "serde",
 ]
 
 [[package]]
