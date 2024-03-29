@@ -79,6 +79,11 @@ void upatch_correlate_symbols(struct upatch_elf *uelf_source, struct upatch_elf 
 			    sym_orig->sec->twin != sym_patched->sec)
 				continue;
 
+			/* .L symbols should not change section */
+			if (uelf_source->arch == RISCV64 && !strncmp(sym_orig->name, ".L", 2) &&
+			    sym_orig->sec && sym_orig->sec->twin != sym_patched->sec)
+				continue;
+
 			correlate_symbol(sym_orig, sym_patched);
 			break;
 		}
@@ -388,7 +393,8 @@ void upatch_correlate_static_local_variables(struct upatch_elf *uelf_source, str
 			patched_bundled = (patched_sym == patched_sym->sec->sym) ? 1 : 0;
 			if (bundled != patched_bundled)
 				ERROR("bundle mismatch for symbol %s", sym->name);
-			if (!bundled && sym->sec->twin != patched_sym->sec)
+			/* ignore unmatched, gcc generated CSWTCH... symbols */
+			if (!bundled && sym->sec->twin != patched_sym->sec && strncmp(sym->name, "CSWTCH.", 7))
 				ERROR("sections %s and %s aren't correlated for symbol %s",
 				      sym->sec->name, patched_sym->sec->name, sym->name);
 
