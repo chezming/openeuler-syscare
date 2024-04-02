@@ -12,5 +12,11 @@
  * See the Mulan PSL v2 for more details.
  */
 
+pub mod ffi;
+pub mod fs;
+pub mod io;
+mod macros;
 pub mod os;
+pub mod os_str;
+pub mod process;
 pub mod util;

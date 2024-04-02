@@ -12,13 +12,13 @@
  * See the Mulan PSL v2 for more details.
  */
 
-use std::path::PathBuf;
+use std::{fmt::Write, path::PathBuf};
 
-use anyhow::{anyhow, ensure, Error, Result};
+use anyhow::{anyhow, Error, Result};
 use log::info;
 
 use syscare_abi::{PackageInfo, PatchInfo, PatchListRecord, PatchStateRecord};
-use syscare_common::util::flock::{FileLock, FileLockType};
+use syscare_common::fs::{FileLock, FileLockType};
 
 use crate::{args::SubCommand, rpc::RpcProxy};
 
@@ -36,18 +36,20 @@ impl PatchCommandExecutor {
 }
 
 impl PatchCommandExecutor {
-    fn build_error_msg(error_list: impl IntoIterator<Item = Error>) -> Error {
-        let mut err_msg = String::new();
+    fn check_error(mut error_list: Vec<Error>) -> Result<()> {
+        match error_list.len() {
+            0 => Ok(()),
+            1 => Err(error_list.pop().unwrap()),
+            _ => {
+                let mut err_msg = String::new();
+                for (idx, e) in error_list.into_iter().enumerate() {
+                    writeln!(err_msg, "{}. {}", idx, e)?;
+                }
+                err_msg.pop();
 
-        for (idx, e) in error_list.into_iter().enumerate() {
-            err_msg.push_str(&format!("{}. {}", idx, e));
-            err_msg.push('\n');
-            err_msg.push('\n');
+                Err(anyhow!(err_msg))
+            }
         }
-        err_msg.pop();
-        err_msg.pop();
-
-        anyhow!(err_msg).context("Operation failed")
     }
 
     fn show_patch_info(patch_list: impl IntoIterator<Item = (String, PatchInfo)>) {
@@ -88,7 +90,7 @@ impl PatchCommandExecutor {
 }
 
 impl CommandExecutor for PatchCommandExecutor {
-    fn invoke(&self, command: &SubCommand) -> Result<()> {
+    fn invoke(&self, command: &SubCommand) -> Result<Option<i32>> {
         self.check_root_permission()?;
 
         match command {
@@ -103,8 +105,9 @@ impl CommandExecutor for PatchCommandExecutor {
                     }
                 }
                 Self::show_patch_info(patch_list);
+                Self::check_error(error_list)?;
 
-                ensure!(error_list.is_empty(), Self::build_error_msg(error_list));
+                return Ok(Some(0));
             }
             SubCommand::Target { identifiers } => {
                 let mut pkg_list = vec![];
@@ -117,8 +120,9 @@ impl CommandExecutor for PatchCommandExecutor {
                     }
                 }
                 Self::show_patch_target(pkg_list);
+                Self::check_error(error_list)?;
 
-                ensure!(error_list.is_empty(), Self::build_error_msg(error_list));
+                return Ok(Some(0));
             }
             SubCommand::Status { identifiers } => {
                 let mut status_list = vec![];
@@ -131,11 +135,13 @@ impl CommandExecutor for PatchCommandExecutor {
                     }
                 }
                 Self::show_patch_status(status_list);
+                Self::check_error(error_list)?;
 
-                ensure!(error_list.is_empty(), Self::build_error_msg(error_list));
+                return Ok(Some(0));
             }
             SubCommand::List => {
                 Self::show_patch_list(self.proxy.get_patch_list()?);
+                return Ok(Some(0));
             }
             SubCommand::Check { identifiers } => {
                 let _file_lock = FileLock::new(&self.lock_file, FileLockType::Exclusive)?;
@@ -146,8 +152,9 @@ impl CommandExecutor for PatchCommandExecutor {
                         error_list.push(e);
                     }
                 }
+                Self::check_error(error_list)?;
 
-                ensure!(error_list.is_empty(), Self::build_error_msg(error_list));
+                return Ok(Some(0));
             }
             SubCommand::Apply { identifiers, force } => {
                 let _file_lock = FileLock::new(&self.lock_file, FileLockType::Exclusive)?;
@@ -161,8 +168,9 @@ impl CommandExecutor for PatchCommandExecutor {
                     }
                 }
                 Self::show_patch_status(status_list);
+                Self::check_error(error_list)?;
 
-                ensure!(error_list.is_empty(), Self::build_error_msg(error_list));
+                return Ok(Some(0));
             }
             SubCommand::Remove { identifiers } => {
                 let _file_lock = FileLock::new(&self.lock_file, FileLockType::Exclusive)?;
@@ -176,23 +184,25 @@ impl CommandExecutor for PatchCommandExecutor {
                     }
                 }
                 Self::show_patch_status(status_list);
+                Self::check_error(error_list)?;
 
-                ensure!(error_list.is_empty(), Self::build_error_msg(error_list));
+                return Ok(Some(0));
             }
-            SubCommand::Active { identifiers } => {
+            SubCommand::Active { identifiers, force } => {
                 let _file_lock = FileLock::new(&self.lock_file, FileLockType::Exclusive)?;
 
                 let mut status_list = vec![];
                 let mut error_list = vec![];
                 for identifier in identifiers {
-                    match self.proxy.active_patch(identifier) {
+                    match self.proxy.active_patch(identifier, *force) {
                         Ok(new_status) => status_list.extend(new_status),
                         Err(e) => error_list.push(e),
                     }
                 }
                 Self::show_patch_status(status_list);
+                Self::check_error(error_list)?;
 
-                ensure!(error_list.is_empty(), Self::build_error_msg(error_list));
+                return Ok(Some(0));
             }
             SubCommand::Deactive { identifiers } => {
                 let _file_lock = FileLock::new(&self.lock_file, FileLockType::Exclusive)?;
@@ -206,8 +216,9 @@ impl CommandExecutor for PatchCommandExecutor {
                     }
                 }
                 Self::show_patch_status(status_list);
+                Self::check_error(error_list)?;
 
-                ensure!(error_list.is_empty(), Self::build_error_msg(error_list));
+                return Ok(Some(0));
             }
             SubCommand::Accept { identifiers } => {
                 let _file_lock = FileLock::new(&self.lock_file, FileLockType::Exclusive)?;
@@ -221,21 +232,25 @@ impl CommandExecutor for PatchCommandExecutor {
                     }
                 }
                 Self::show_patch_status(status_list);
+                Self::check_error(error_list)?;
 
-                ensure!(error_list.is_empty(), Self::build_error_msg(error_list));
+                return Ok(Some(0));
             }
             SubCommand::Save => {
                 let _file_lock = FileLock::new(&self.lock_file, FileLockType::Exclusive)?;
 
                 self.proxy.save_patch_status()?;
+                return Ok(Some(0));
             }
             SubCommand::Restore { accepted } => {
                 let _file_lock = FileLock::new(&self.lock_file, FileLockType::Exclusive)?;
 
                 self.proxy.restore_patch_status(*accepted)?;
+                return Ok(Some(0));
             }
             _ => {}
-        };
-        Ok(())
+        }
+
+        Ok(None)
     }
 }

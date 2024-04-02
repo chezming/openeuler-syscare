@@ -15,14 +15,16 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::BufReader;
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::os::unix::ffi::{OsStrExt as StdOsStrExt, OsStringExt};
 use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::util::fs;
-use crate::util::os_line::{BufReadOsLines, OsLines};
-use crate::util::os_str::OsStrExt as OsStrUtil;
+use crate::{
+    ffi::OsStrExt,
+    fs,
+    io::{BufReadOsLines, OsLines},
+};
 
 #[derive(Debug)]
 pub struct MountInfo {
@@ -58,7 +60,7 @@ impl<'a> Iterator for MountInfoParser<'a> {
             return None;
         }
 
-        for char_indices in new_str.char_indices() {
+        for (index, char) in new_str.char_indices() {
             let pattern;
             let skip_len;
 
@@ -72,11 +74,11 @@ impl<'a> Iterator for MountInfoParser<'a> {
                     skip_len = 1;
                 }
             };
-            if char_indices.char() == pattern {
+            if char == pattern {
                 self.num += 1;
-                self.pos += char_indices.index() + skip_len;
+                self.pos += index + skip_len;
 
-                return Some(OsStr::from_bytes(&data[..char_indices.index()]));
+                return Some(OsStr::from_bytes(&data[..index]));
             }
         }
 
@@ -119,7 +121,7 @@ impl Mounts {
             mount_opts: iter
                 .next()?
                 .split(VALUE_SPLITTER)
-                .map(OsStrUtil::trim)
+                .map(OsStrExt::trim)
                 .map(OsString::from)
                 .collect::<Vec<_>>(),
             optional: iter
@@ -132,7 +134,7 @@ impl Mounts {
             super_opts: iter
                 .next()?
                 .split(VALUE_SPLITTER)
-                .map(OsStrUtil::trim)
+                .map(OsStrExt::trim)
                 .map(OsString::from)
                 .collect::<Vec<_>>(),
         })

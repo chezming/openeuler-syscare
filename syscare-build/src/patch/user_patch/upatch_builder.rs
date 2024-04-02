@@ -18,26 +18,24 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
-use lazy_static::lazy_static;
-use log::{debug, trace};
+use anyhow::{ensure, Context, Result};
+use log::{debug, info, trace, Level};
 use uuid::Uuid;
 use which::which;
 
 use syscare_abi::{PackageInfo, PatchEntity, PatchFile, PatchInfo, PatchType};
-use syscare_common::util::{
-    digest,
-    ext_cmd::{ExternCommand, ExternCommandArgs, ExternCommandEnvs},
-    fs,
-    os_str::OsStringExt,
+use syscare_common::{
+    args_os, concat_os, fs,
+    process::{Command, CommandArgs, CommandEnvs},
+    util::digest,
 };
 
-use crate::{build_params::BuildParameters, package::ElfRelation, patch::PatchBuilder, PKG_IMPL};
+use crate::{build_params::BuildParameters, package::PackageImpl, patch::PatchBuilder};
 
-lazy_static! {
-    static ref UPATCH_BUILD: ExternCommand =
-        ExternCommand::new("/usr/libexec/syscare/upatch-build");
-}
+use super::{elf_relation::ElfRelation, DEBUGINFO_FILE_EXT};
+
+const UPATCH_BUILD_BIN: &str = "/usr/libexec/syscare/upatch-build";
+const RPMBUILD_BIN: &str = "rpmbuild";
 
 struct UBuildParameters {
     work_dir: PathBuf,
@@ -48,8 +46,8 @@ struct UBuildParameters {
     patch_output_dir: PathBuf,
     compiler_list: Vec<PathBuf>,
     elf_relations: Vec<ElfRelation>,
-    build_cmd_original: OsString,
-    build_cmd_patched: OsString,
+    prepare_cmd: OsString,
+    build_cmd: OsString,
     patch_name: String,
     patch_type: PatchType,
     patch_version: String,
@@ -62,10 +60,18 @@ struct UBuildParameters {
     verbose: bool,
 }
 
-pub struct UserPatchBuilder;
+pub struct UserPatchBuilder {
+    pkg_impl: &'static PackageImpl,
+}
 
 impl UserPatchBuilder {
-    fn detect_compilers(&self) -> Vec<PathBuf> {
+    pub fn new(pkg_impl: &'static PackageImpl) -> Self {
+        Self { pkg_impl }
+    }
+}
+
+impl UserPatchBuilder {
+    fn detect_compilers() -> Vec<PathBuf> {
         const COMPILER_NAMES: [&str; 4] = ["cc", "gcc", "c++", "g++"];
 
         // Get compiler path and filter invalid one
@@ -77,30 +83,47 @@ impl UserPatchBuilder {
         compiler_set.into_iter().collect()
     }
 
-    fn create_topdir_macro<P: AsRef<Path>>(&self, buildroot: P) -> OsString {
-        OsString::from("--define \"_topdir")
-            .append(buildroot.as_ref())
-            .concat("\"")
+    fn create_topdir_macro<P: AsRef<Path>>(buildroot: P) -> OsString {
+        concat_os!("--define '_topdir ", buildroot.as_ref(), "'")
     }
 
-    fn create_build_macros(&self, jobs: usize) -> OsString {
-        OsString::new()
-            .append("--define \"_smp_build_ncpus")
-            .append(jobs.to_string())
-            .concat("\"")
-            .append("--define \"__spec_install_post %{nil}\"")
-            .append("--define \"__find_provides %{nil}\"")
-            .append("--define \"__find_requires %{nil}\"")
-            .append("--define \"_use_internal_dependency_generator 0\"")
+    fn create_build_macros(jobs: usize) -> OsString {
+        args_os!(
+            concat_os!("--define '_smp_build_ncpus ", jobs.to_string(), "'"),
+            "--define '__spec_install_post %{nil}'",
+            "--define '__find_provides %{nil}'",
+            "--define '__find_requires %{nil}'",
+            "--define '_use_internal_dependency_generator 0'",
+        )
+    }
+
+    fn parse_elf_relations(
+        package: &PackageInfo,
+        debuginfo_root: &Path,
+    ) -> Result<Vec<ElfRelation>> {
+        let debuginfo_files = fs::list_files_by_ext(
+            debuginfo_root,
+            DEBUGINFO_FILE_EXT,
+            fs::TraverseOptions { recursive: true },
+        )?;
+        ensure!(
+            !debuginfo_files.is_empty(),
+            "Cannot find any debuginfo file"
+        );
+
+        let mut elf_relations = Vec::new();
+        for debuginfo in &debuginfo_files {
+            // Skip elf relation error check may cause unknown error
+            if let Ok(elf_relation) = ElfRelation::parse(debuginfo_root, package, debuginfo) {
+                elf_relations.push(elf_relation);
+            }
+        }
+        Ok(elf_relations)
     }
 }
 
 impl UserPatchBuilder {
     fn build_prepare(&self, build_params: &BuildParameters) -> Result<UBuildParameters> {
-        const RPMBUILD_CMD: &str = "rpmbuild";
-        const RPMBUILD_PERP_FLAGS: &str = "-bp";
-        const RPMBUILD_FLAGS: &str = "-bb --noprep --nocheck --nodebuginfo --noclean";
-
         let pkg_build_root = &build_params.pkg_build_root;
         let pkg_binary_dir = pkg_build_root.buildroot.clone();
         let pkg_output_dir = pkg_build_root.rpms.clone();
@@ -114,37 +137,26 @@ impl UserPatchBuilder {
         let patch_spec = &build_entry.build_spec;
         let patch_target = &build_entry.target_pkg;
 
-        let topdir_macro = self.create_topdir_macro(pkg_build_root.as_os_str());
-        let build_macros = self.create_build_macros(build_params.jobs);
+        let topdir_macro = Self::create_topdir_macro(pkg_build_root);
+        let build_macros = Self::create_build_macros(build_params.jobs);
 
-        let build_cmd_prep = OsString::from(RPMBUILD_CMD)
-            .append(&topdir_macro)
-            .append(RPMBUILD_PERP_FLAGS)
-            .append(patch_spec);
+        let prepare_cmd = args_os!(RPMBUILD_BIN, &topdir_macro, "-bp", patch_spec);
+        let build_cmd = args_os!(
+            RPMBUILD_BIN,
+            &topdir_macro,
+            &build_macros,
+            "-bb --noprep --nocheck --nodebuginfo --noclean",
+            patch_spec
+        );
 
-        let build_cmd_original = OsString::from(RPMBUILD_CMD)
-            .append(&topdir_macro)
-            .append(&build_macros)
-            .append(RPMBUILD_FLAGS)
-            .append(patch_spec)
-            .append("&&")
-            .append(build_cmd_prep);
-
-        let build_cmd_patched = OsString::from(RPMBUILD_CMD)
-            .append(&topdir_macro)
-            .append(&build_macros)
-            .append(RPMBUILD_FLAGS)
-            .append(patch_spec);
-
-        debug!("- Detecting compilers");
-        let compiler_list = self.detect_compilers();
+        info!("- Detecting compilers");
+        let compiler_list = Self::detect_compilers();
         for compiler in &compiler_list {
-            trace!("{}", compiler.display())
+            debug!("{}", compiler.display())
         }
 
-        debug!("- Parsing elf relations");
-        let elf_relations = PKG_IMPL
-            .parse_elf_relations(patch_target, debuginfo_pkg_root)
+        info!("- Parsing elf relations");
+        let elf_relations = Self::parse_elf_relations(patch_target, debuginfo_pkg_root)
             .context("Failed to parse elf relation")?;
         for elf_relation in &elf_relations {
             trace!("{}", elf_relation);
@@ -159,8 +171,8 @@ impl UserPatchBuilder {
             patch_output_dir,
             compiler_list,
             elf_relations,
-            build_cmd_original,
-            build_cmd_patched,
+            prepare_cmd,
+            build_cmd,
             patch_name: build_params.patch_name.to_owned(),
             patch_type: build_params.patch_type.to_owned(),
             patch_version: build_params.patch_version.to_owned(),
@@ -176,8 +188,9 @@ impl UserPatchBuilder {
         Ok(ubuild_params)
     }
 
-    fn parse_ubuild_cmd_args(&self, ubuild_params: &UBuildParameters) -> ExternCommandArgs {
-        let mut cmd_args = ExternCommandArgs::new()
+    fn parse_ubuild_cmd_args(&self, ubuild_params: &UBuildParameters) -> CommandArgs {
+        let mut cmd_args = CommandArgs::new();
+        cmd_args
             .arg("--work-dir")
             .arg(&ubuild_params.work_dir)
             .arg("--build-root")
@@ -186,41 +199,43 @@ impl UserPatchBuilder {
             .arg(&ubuild_params.patch_source_dir)
             .arg("--elf-dir")
             .arg(&ubuild_params.pkg_binary_dir)
-            .arg("--build-source-cmd")
-            .arg(&ubuild_params.build_cmd_original)
-            .arg("--build-patch-cmd")
-            .arg(&ubuild_params.build_cmd_patched)
+            .arg("--prepare-cmd")
+            .arg(&ubuild_params.prepare_cmd)
+            .arg("--build-cmd")
+            .arg(&ubuild_params.build_cmd)
             .arg("--output-dir")
             .arg(&ubuild_params.patch_output_dir);
 
         for compiler in &ubuild_params.compiler_list {
-            cmd_args = cmd_args.arg("--compiler").arg(compiler)
+            cmd_args.arg("--compiler").arg(compiler);
         }
-
-        for relation in &ubuild_params.elf_relations {
-            cmd_args = cmd_args
-                .arg("--elf-path")
-                .arg(OsString::from("*").concat(&relation.elf))
+        for elf_relation in &ubuild_params.elf_relations {
+            cmd_args
+                .arg("--elf")
+                .arg(concat_os!("*", &elf_relation.elf))
                 .arg("--debuginfo")
-                .arg(&relation.debuginfo)
+                .arg(&elf_relation.debuginfo);
         }
+        cmd_args
+            .arg("--patch")
+            .args(ubuild_params.patch_files.iter().map(|patch| &patch.path));
 
         if ubuild_params.skip_compiler_check {
-            cmd_args = cmd_args.arg("--skip-compiler-check");
+            cmd_args.arg("--skip-compiler-check");
         }
         if ubuild_params.verbose {
-            cmd_args = cmd_args.arg("--verbose");
+            cmd_args.arg("--verbose");
         }
-        cmd_args = cmd_args.arg("--patch");
-        cmd_args = cmd_args.args(ubuild_params.patch_files.iter().map(|patch| &patch.path));
+        cmd_args.arg("--skip-cleanup");
 
         cmd_args
     }
 
-    fn parse_ubuild_cmd_envs(&self) -> ExternCommandEnvs {
-        ExternCommandEnvs::new()
-            .env("OMP_PROC_BIND", "false")
-            .env("QA_RPATHS", "0x0011")
+    fn parse_ubuild_cmd_envs(&self) -> CommandEnvs {
+        let mut cmd_envs = CommandEnvs::new();
+        cmd_envs.envs([("OMP_PROC_BIND", "false"), ("QA_RPATHS", "0x0011")]);
+
+        cmd_envs
     }
 
     fn parse_patch_info(
@@ -248,10 +263,7 @@ impl UserPatchBuilder {
                 let entity_name = fs::file_name(patch_file);
                 let entity_target = elf_file.to_owned();
                 let entity_checksum = digest::file(patch_file).with_context(|| {
-                    format!(
-                        "Failed to calulate patch \"{}\" checksum",
-                        patch_file.display()
-                    )
+                    format!("Failed to calulate patch {} checksum", patch_file.display())
                 })?;
 
                 let patch_entity = PatchEntity {
@@ -281,48 +293,48 @@ impl UserPatchBuilder {
     }
 
     fn invoke_upatch_build(&self, ubuild_params: &UBuildParameters) -> Result<()> {
-        UPATCH_BUILD
-            .execve(
-                self.parse_ubuild_cmd_args(ubuild_params),
-                self.parse_ubuild_cmd_envs(),
-            )?
-            .check_exit_code()
+        Command::new(UPATCH_BUILD_BIN)
+            .args(self.parse_ubuild_cmd_args(ubuild_params))
+            .envs(self.parse_ubuild_cmd_envs())
+            .stdout(Level::Debug)
+            .run_with_output()?
+            .exit_ok()
     }
 
     fn generate_patch_info(&self, ubuild_params: &UBuildParameters) -> Result<Vec<PatchInfo>> {
-        debug!("- Finding patch binaries");
+        info!("- Finding patch binaries");
         let patch_binary_files = fs::list_files(
             &ubuild_params.patch_output_dir,
             fs::TraverseOptions { recursive: false },
         )
         .context("Failed to find generated patch file")?;
 
-        debug!("- Finding output packages");
+        info!("- Finding output packages");
         let output_pkgs = fs::list_files(
             &ubuild_params.pkg_output_dir,
             fs::TraverseOptions { recursive: true },
         )
         .context("Failed to find generated package file")?;
 
-        debug!("- Generating patch metadata");
+        info!("- Collecting patch metadata");
         let mut patch_info_list = Vec::new();
         for pkg_file in output_pkgs {
-            let mut target_pkg = PKG_IMPL.parse_package_info(&pkg_file).with_context(|| {
-                format!(
-                    "Failed to parse package \"{}\" metadata",
-                    pkg_file.display()
-                )
-            })?;
+            let mut target_pkg =
+                self.pkg_impl
+                    .parse_package_info(&pkg_file)
+                    .with_context(|| {
+                        format!("Failed to parse package {} metadata", pkg_file.display())
+                    })?;
 
             // Override target package release
             target_pkg.release = ubuild_params.patch_target.release.to_owned();
 
-            let pkg_file_list = PKG_IMPL.query_package_files(&pkg_file).with_context(|| {
-                format!(
-                    "Failed to query package \"{}\" file list",
-                    pkg_file.display()
-                )
-            })?;
+            let pkg_file_list =
+                self.pkg_impl
+                    .query_package_files(&pkg_file)
+                    .with_context(|| {
+                        format!("Failed to query package {} file list", pkg_file.display())
+                    })?;
 
             let patch_info = self
                 .parse_patch_info(
@@ -345,13 +357,13 @@ impl UserPatchBuilder {
 
 impl PatchBuilder for UserPatchBuilder {
     fn build_patch(&self, build_params: &BuildParameters) -> Result<Vec<PatchInfo>> {
-        debug!("- Preparing to build patch");
+        info!("- Preparing to build patch");
         let ubuild_params = self.build_prepare(build_params)?;
 
-        debug!("- Building patch");
+        info!("- Building patch");
         self.invoke_upatch_build(&ubuild_params)?;
 
-        debug!("- Generating patch metadata");
+        info!("Generating patch metadata");
         let patch_info_list = self
             .generate_patch_info(&ubuild_params)
             .context("Failed to generate patch metadata")?;

@@ -12,8 +12,13 @@
  * See the Mulan PSL v2 for more details.
  */
 
-mod manager;
-mod transaction;
+pub mod driver;
+pub mod entity;
+pub mod manager;
+pub mod monitor;
+pub mod resolver;
+pub mod transaction;
 
-pub use manager::{Patch, PatchManager, PatchMonitor, PatchOpFlag};
-pub use transaction::PatchTransaction;
+const PATCH_INFO_FILE_NAME: &str = "patch_info";
+const PATCH_INSTALL_DIR: &str = "patches";
+const PATCH_STATUS_FILE_NAME: &str = "patch_status";
