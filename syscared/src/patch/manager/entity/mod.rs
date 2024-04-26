@@ -60,6 +60,7 @@ impl Patch {
             let patch_name = patch_info.name();
             let target_name = patch_info.target.short_name();
             let target_pkg_name = patch_info.target.full_name();
+            
 
             let patch = match patch_info.kind {
                 PatchType::KernelPatch => {
@@ -138,3 +139,6 @@ impl std::fmt::Display for Patch {
         f.write_str(&self.entity_name)
     }
 }
+
+
+

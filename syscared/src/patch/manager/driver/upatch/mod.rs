@@ -153,7 +153,7 @@ impl UserPatchDriver {
 }
 
 impl PatchDriver for UserPatchDriver {
-    fn check(&self, patch: &Patch, flag: PatchOpFlag) -> Result<()> {
+    fn check(&mut self, patch: &Patch, flag: PatchOpFlag) -> Result<()> {
         self.check_compatiblity(patch)?;
         self.check_consistency(patch)?;
 
@@ -171,7 +171,7 @@ impl PatchDriver for UserPatchDriver {
         Ok(status.into())
     }
 
-    fn apply(&self, patch: &Patch, flag: PatchOpFlag) -> Result<()> {
+    fn apply(&mut self, patch: &Patch, flag: PatchOpFlag) -> Result<()> {
         let patch_ext: &UserPatchExt = (&patch.info_ext).into();
 
         let patch_uuid = patch.uuid.as_str().to_cstring()?;
@@ -196,7 +196,7 @@ impl PatchDriver for UserPatchDriver {
         }
     }
 
-    fn remove(&self, patch: &Patch, _flag: PatchOpFlag) -> Result<()> {
+    fn remove(&mut self, patch: &Patch, _flag: PatchOpFlag) -> Result<()> {
         let patch_uuid = patch.uuid.as_str().to_cstring()?;
         let ret_val = unsafe { ffi::upatch_remove(patch_uuid.as_ptr()) };
 
@@ -208,7 +208,7 @@ impl PatchDriver for UserPatchDriver {
         }
     }
 
-    fn active(&self, patch: &Patch, _flag: PatchOpFlag) -> Result<()> {
+    fn active(&mut self, patch: &Patch, _flag: PatchOpFlag) -> Result<()> {
         let patch_ext: &UserPatchExt = (&patch.info_ext).into();
         let target_elf = &patch_ext.target_elf;
 
@@ -247,7 +247,7 @@ impl PatchDriver for UserPatchDriver {
         }
     }
 
-    fn deactive(&self, patch: &Patch, _flag: PatchOpFlag) -> Result<()> {
+    fn deactive(&mut self, patch: &Patch, _flag: PatchOpFlag) -> Result<()> {
         let patch_ext: &UserPatchExt = (&patch.info_ext).into();
         let target_elf = &patch_ext.target_elf;
 
