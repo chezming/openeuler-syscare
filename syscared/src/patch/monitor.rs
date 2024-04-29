@@ -119,7 +119,7 @@ impl MonitorThread {
         while let Some(inotify) = self.inotify.lock().as_mut() {
             let mut buffer = [0; MONITOR_EVENT_BUFFER_CAPACITY];
 
-            if let Ok(events) = inotify.read_events(&mut buffer) {
+            if let Ok(events) = inotify.read_events_blocking(&mut buffer) {
                 for event in events {
                     if let Some(event_path) = event.name {
                         if event.mask.contains(EventMask::CREATE) {
