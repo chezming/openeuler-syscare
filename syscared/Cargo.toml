@@ -27,6 +27,7 @@ inotify            = { version = "0.9" }
 jsonrpc-core       = { version = "18.0" }
 jsonrpc-derive     = { version = "18.0" }
 jsonrpc-ipc-server = { version = "18.0" }
+object             = { version = "0.27" }
 nix                = { version = "0.25" }
 
 [build-dependencies]

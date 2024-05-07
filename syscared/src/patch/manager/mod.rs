@@ -131,7 +131,9 @@ impl PatchManager {
 
     pub fn check_patch(&mut self, patch: &Patch, flag: PatchOpFlag) -> Result<()> {
         info!("Check patch \"{}\"", patch);
-        self.driver_check_patch(patch, flag)
+        self.driver_check_patch(patch, flag)?;
+
+        Ok(())
     }
 
     pub fn apply_patch(&mut self, patch: &Patch, flag: PatchOpFlag) -> Result<PatchStatus> {
@@ -434,11 +436,17 @@ impl PatchManager {
         let mut driver_map = IndexMap::new();
 
         debug!("Initializing kernel patch driver...");
-        driver_map.insert(
-            PatchType::KernelPatch,
-            Box::new(KernelPatchDriver) as Box<dyn PatchDriver>,
-        );
-
+        match KernelPatchDriver::new().context("Failed to initialize user kernel driver") {
+            Ok(kernel_driver) =>{
+                driver_map.insert(
+                    PatchType::KernelPatch,
+                    Box::new(kernel_driver) as Box<dyn PatchDriver>,
+                );
+            }
+            Err(e) => {
+                error!("{:?}", e);
+            }
+        }
         debug!("Initializing user patch driver...");
         match UserPatchDriver::new().context("Failed to initialize user patch driver") {
             Ok(upatch_driver) => {
@@ -509,7 +517,7 @@ impl PatchManager {
         ])
     }
 
-    fn call_driver<'a, T, U>(
+  /*  fn call_driver<'a, T, U>(
         &'a self,
         patch: &Patch,
         driver_action: T,
@@ -519,51 +527,78 @@ impl PatchManager {
         T: FnOnce(&'a dyn PatchDriver, &Patch, PatchOpFlag) -> Result<U>,
     {
         let patch_type = patch.kind();
-        let driver = self
+        let mut driver = self
             .driver_map
             .get(&patch_type)
             .map(Box::deref)
             .with_context(|| format!("Driver: Failed to get {} driver", patch_type))?;
 
-        driver_action(driver, patch, flag)
+        driver_action(&driver, patch, flag)
     }
-
+    */
     fn driver_get_patch_status(&self, patch: &Patch, flag: PatchOpFlag) -> Result<PatchStatus> {
-        self.call_driver(patch, PatchDriver::status, flag)
+    /*    self.call_driver(patch, PatchDriver::status, flag)
             .with_context(|| format!("Driver: Failed to get patch \"{}\" status", patch))
+            */
+        let patch_type = patch.kind();
+        self.driver_map
+            .get(&patch_type)
+            .map(Box::deref)
+            .with_context(|| format!("Driver: Failed to get {} driver", patch_type)).unwrap().status(patch,flag)
+          /*  if let Some(patch_driver) =  self.driver_map.get_mut(&patch_type) {
+                patch_driver.status(patch,flag)?;
+            }
+             bail!("Driver: Failed to get {} driver", patch_type)*/
+      //  driver.status(patch,flag)
     }
 
     fn driver_check_patch(&mut self, patch: &Patch, flag: PatchOpFlag) -> Result<()> {
-        self.call_driver(patch, PatchDriver::check, flag)
-            .with_context(|| format!("Driver: Patch \"{}\" check failed", patch))
+        let patch_type = patch.kind();
+        if let Some(patch_driver) =  self.driver_map.get_mut(&patch_type) {
+               patch_driver.check(patch,flag)
+        }else{
+               bail!("Driver: Failed to get {} driver", patch_type)
+        }
     }
 
     fn driver_apply_patch(&mut self, patch: &Patch, flag: PatchOpFlag) -> Result<()> {
-        self.call_driver(patch, PatchDriver::apply, flag)
-            .with_context(|| format!("Driver: Failed to apply patch \"{}\"", patch))?;
-
-        self.set_patch_status(patch, PatchStatus::Deactived)
+        let patch_type = patch.kind();
+        if let Some(patch_driver) =  self.driver_map.get_mut(&patch_type) {
+               patch_driver.apply(patch,flag)?;
+               self.set_patch_status(patch, PatchStatus::Deactived)
+        }else{
+               bail!("Driver: Failed to get {} driver", patch_type)
+        }
     }
 
     fn driver_remove_patch(&mut self, patch: &Patch, flag: PatchOpFlag) -> Result<()> {
-        self.call_driver(patch, PatchDriver::remove, flag)
-            .with_context(|| format!("Driver: Failed to remove patch \"{}\"", patch))?;
-
-        self.set_patch_status(patch, PatchStatus::NotApplied)
+         let patch_type = patch.kind();
+         if let Some(patch_driver) =  self.driver_map.get_mut(&patch_type) {
+               patch_driver.remove(patch,flag)?;
+               self.set_patch_status(patch, PatchStatus::NotApplied)
+         }else{
+               bail!("Driver: Failed to get {} driver", patch_type)
+        }
     }
 
     fn driver_active_patch(&mut self, patch: &Patch, flag: PatchOpFlag) -> Result<()> {
-        self.call_driver(patch, PatchDriver::active, flag)
-            .with_context(|| format!("Driver: Failed to active patch \"{}\"", patch))?;
-
-        self.set_patch_status(patch, PatchStatus::Actived)
+         let patch_type = patch.kind();
+         if let Some(patch_driver) =  self.driver_map.get_mut(&patch_type) {
+               patch_driver.active(patch,flag)?;
+               self.set_patch_status(patch, PatchStatus::Actived)
+         }else{
+               bail!("Driver: Failed to get {} driver", patch_type)
+        }
     }
 
     fn driver_deactive_patch(&mut self, patch: &Patch, flag: PatchOpFlag) -> Result<()> {
-        self.call_driver(patch, PatchDriver::deactive, flag)
-            .with_context(|| format!("Driver: Failed to deactive patch \"{}\"", patch))?;
-
-        self.set_patch_status(patch, PatchStatus::Deactived)
+         let patch_type = patch.kind();
+         if let Some(patch_driver) =  self.driver_map.get_mut(&patch_type) {
+              patch_driver.deactive(patch,flag)?;   
+              self.set_patch_status(patch, PatchStatus::Deactived)
+         }else{
+              bail!("Driver: Failed to get {} driver", patch_type)
+        }
     }
 
     fn driver_accept_patch(&mut self, patch: &Patch, _flag: PatchOpFlag) -> Result<()> {
